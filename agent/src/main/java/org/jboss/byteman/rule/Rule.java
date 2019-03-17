@@ -23,7 +23,15 @@
 */
 package org.jboss.byteman.rule;
 
+import java.io.PrintWriter;
+
+import org.jboss.byteman.agent.AccessEnabler;
+import org.jboss.byteman.agent.AccessibleConstructorInvoker;
+import org.jboss.byteman.agent.AccessibleFieldGetter;
+import org.jboss.byteman.agent.AccessibleFieldSetter;
+import org.jboss.byteman.agent.AccessibleMethodInvoker;
 import org.jboss.byteman.agent.HelperManager;
+import org.jboss.byteman.modules.ModuleSystem;
 import org.jboss.byteman.rule.type.TypeGroup;
 import org.jboss.byteman.rule.type.Type;
 import org.jboss.byteman.rule.exception.*;
@@ -45,6 +53,7 @@ import org.jboss.byteman.rule.compiler.Compiler;
 import java.io.*;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.*;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
@@ -58,6 +67,10 @@ import java_cup.runtime.Symbol;
 public class Rule
 {
     /**
+     * the name of the helper class for this rule
+     */
+    private final String helperToUse;
+    /**
      * the script defining this rule
      */
     private RuleScript ruleScript;
@@ -68,7 +81,11 @@ public class Rule
     /**
      * the class loader for the target class
      */
-    private ClassLoader loader;
+    private ClassLoader targetLoader;
+    /**
+     * the class loader for the help adapter
+     */
+    private ClassLoader helperLoader;
     /**
      * the parsed event derived from the script for this rule
      */
@@ -151,26 +168,41 @@ public class Rule
      * lifecycle event manager for rule helpers
      */
     private HelperManager helperManager;
-    /**
-     * a list of field objects used by compiled code to enable rule code to access non-public fields
-     */
-    private List<Field> accessibleFields;
 
     /**
-     * a list of method objects used by compiled code to enable rule code to access non-public methods
+     * auxiliary to manage access to normally inaccessible fields
      */
-    private List<Method> accessibleMethods;
+    private AccessEnabler accessEnabler;
 
-    private Rule(RuleScript ruleScript, ClassLoader loader, HelperManager helperManager)
+    /**
+     * a list of field getter objects used to enable rule code to read non-public fields
+     */
+    private List<AccessibleFieldGetter> accessibleFieldGetters;
+
+    /**
+     * a list of field setter objects used by to enable rule code to write non-public fields
+     */
+    private List<AccessibleFieldSetter> accessibleFieldSetters;
+
+    /**
+     * a list of method invoker objects used to enable rule code to invoke non-public methods
+     */
+    private List<AccessibleMethodInvoker> accessibleMethodInvokers;
+
+    /**
+     * a list of constructor invoker objects used to enable rule code to invoke non-public constructors
+     */
+    private List<AccessibleConstructorInvoker> accessibleConstructorInvokers;
+
+    private Rule(RuleScript ruleScript, ClassLoader loader, HelperManager helperManager, AccessEnabler accessEnabler)
             throws ParseException, TypeException, CompileException
     {
         ParseNode ruleTree;
 
         this.ruleScript = ruleScript;
         this.helperClass = null;
-        this.loader = loader;
+        this.targetLoader = loader;
 
-        typeGroup = new TypeGroup(loader);
         bindings = new Bindings();
         checked = false;
         triggerClass = null;
@@ -178,10 +210,14 @@ public class Rule
         triggerDescriptor = null;
         triggerAccess = 0;
         returnType = null;
-        accessibleFields =  null;
-        accessibleMethods = null;
+        accessibleFieldGetters =  null;
+        accessibleFieldSetters =  null;
+        accessibleMethodInvokers = null;
+        accessibleConstructorInvokers = null;
         // this is only set when the rule is created via a real installed transformer
         this.helperManager =  helperManager;
+        this.accessEnabler = accessEnabler;
+
         ECAGrammarParser parser = null;
         try {
             String file = getFile();
@@ -206,6 +242,33 @@ public class Rule
             }
             message += "\n" + th.getMessage();
             throw new ParseException(message);
+        }
+
+
+        // set up the TypeGroup, which needs to see the correct classes
+        // ensure that we have a valid helper class
+        // this needs to be done here, rather than typechecking, since Event.create() may need it
+        String helperName = ruleScript.getTargetHelper();
+        String[] imports = ruleScript.getImports();
+        if (helperName != null || isCompileToBytecode() || imports.length > 0) {
+            //try {
+                // We always need to load the helper via the module system if we're compiling to byte code
+                // so that the compiler can use it.
+                String helperToUse = (helperName != null) ? helperName : Helper.class.getName();
+                this.helperLoader = getModuleSystem().createLoader(targetLoader, imports);
+                this.helperToUse = helperToUse;
+                // initialise helper class lazily so it doesn't happen under
+                // a Transform, invalidating ruel injection
+                // helperClass = helperLoader.loadClass(helperToUse);
+                typeGroup = new TypeGroup(helperLoader);
+            //} catch (ClassNotFoundException e) {
+            //    throw new TypeException("Rule.typecheck : unknown helper class " + helperName + " for rule " + getName());
+            //}
+        } else {
+            this.helperLoader = null;
+            this.helperToUse = Helper.class.getName();
+            helperClass = Helper.class;
+            typeGroup = new TypeGroup(targetLoader);
         }
 
         ParseNode eventTree = (ParseNode)ruleTree.getChild(0);
@@ -308,13 +371,22 @@ public class Rule
      */
     public ClassLoader getLoader()
     {
-        return loader;
+        return targetLoader;
     }
 
-    public static Rule create(RuleScript ruleScript, ClassLoader loader, HelperManager helperManager)
+    /**
+     * get the class loader of the rule-specific helper adapter class
+     * @return the class loader
+     */
+    public ClassLoader getHelperLoader()
+    {
+        return helperLoader;
+    }
+
+    public static Rule create(RuleScript ruleScript, ClassLoader loader, HelperManager helperManager, AccessEnabler accessEnabler)
             throws ParseException, TypeException, CompileException
     {
-            return new Rule(ruleScript, loader, helperManager);
+            return new Rule(ruleScript, loader, helperManager, accessEnabler);
     }
 
     public void setEvent(String eventSpec) throws ParseException, TypeException
@@ -449,17 +521,14 @@ public class Rule
                 typeCheck();
                 compile();
                 checked = true;
-                installed();
             } catch (TypeWarningException te) {
                 checkFailed = true;
-                if (Transformer.isVerbose()) {
-                    StringWriter stringWriter = new StringWriter();
-                    PrintWriter writer = new PrintWriter(stringWriter);
-                    writer.println("Rule.ensureTypeCheckedCompiled : warning type checking rule " + getName());
-                    te.printStackTrace(writer);
-                    detail = stringWriter.toString();
-                    System.out.println(detail);
-                }
+                StringWriter stringWriter = new StringWriter();
+                PrintWriter writer = new PrintWriter(stringWriter);
+                writer.println("Rule.ensureTypeCheckedCompiled : warning type checking rule " + getName());
+                te.printStackTrace(writer);
+                detail = stringWriter.toString();
+                Helper.verbose(detail);
             } catch (TypeException te) {
                 checkFailed = true;
                 StringWriter stringWriter = new StringWriter();
@@ -467,7 +536,7 @@ public class Rule
                 writer.println("Rule.ensureTypeCheckedCompiled : error type checking rule " + getName());
                 te.printStackTrace(writer);
                 detail = stringWriter.toString();
-                System.out.println(detail);
+                Helper.err(detail);
             } catch (CompileException ce) {
                 checkFailed = true;
                 StringWriter stringWriter = new StringWriter();
@@ -475,10 +544,14 @@ public class Rule
                 writer.println("Rule.ensureTypeCheckedCompiled : error compiling rule " + getName());
                 ce.printStackTrace(writer);
                 detail = stringWriter.toString();
-                System.out.println(detail);
+                Helper.err(detail);
             }
 
-            ruleScript.recordCompile(triggerClass, loader, !checkFailed, detail);
+            // this uses the original class loader for matching
+            boolean runInstall = ruleScript.recordCompile(this, triggerClass, targetLoader, !checkFailed, detail);
+            if (runInstall) {
+                installed();
+            }
             return !checkFailed;
         }
 
@@ -487,28 +560,22 @@ public class Rule
 
     /**
      * type check this rule
-     * @throws TypeException if the ruele contains type errors
+     * @throws TypeException if the rule contains type errors
      */
     public void typeCheck()
             throws TypeException
     {
-        String helperName = ruleScript.getTargetHelper();
-        
-        // ensure that we have a valid helper class
-        if (helperName != null) {
-            try {
-                helperClass = loader.loadClass(helperName);
-            } catch (ClassNotFoundException e) {
-                throw new TypeException("Rule.typecheck : unknown helper class " + helperName + " for rule " + getName());
-            }
-        } else {
-            helperClass = Helper.class;
-        }
+        ensureHelperClass();
         if (triggerExceptions != null) {
             // ensure that the type group includes the exception types
             typeGroup.addExceptionTypes(triggerExceptions);
         }
-        
+
+        // ensure the trigger class is in the type group
+
+        if (typeGroup.lookup(triggerClass) == null) {
+            typeGroup.create(triggerClass);
+        }
         // try to resolve all types in the type group to classes
 
         typeGroup.resolveTypes();
@@ -523,6 +590,11 @@ public class Rule
         action.typeCheck(Type.VOID);
     }
 
+    public ModuleSystem getModuleSystem()
+    {
+        return helperManager.getModuleSystem();
+    }
+
     /**
      * install helper class used to execute this rule. this may involve generating a compiled helper class
      * for the rule and, if compilation to bytecode is enabled, generating bytecode for a method of this class
@@ -534,25 +606,80 @@ public class Rule
     public void compile()
             throws CompileException
     {
-        boolean compileToBytecode = isCompileToBytecode();
+        boolean doCompileToBytecode = doCompileToBytecode();
+        String[] imports = ruleScript.getImports();
+        Class<?> helperClass = getHelperClass();
 
-        if (helperClass == Helper.class && !compileToBytecode) {
+        if (helperClass == Helper.class && !doCompileToBytecode && imports.length == 0) {
             // we can use the builtin interpreted helper adapter for class Helper
-           helperImplementationClass = InterpretedHelper.class;
+            helperImplementationClass = InterpretedHelper.class;
+            helperImplementationClassName  = Type.internalName(helperImplementationClass, true);
         } else {
             // we need to generate a helper adapter class which either interprets or compiles
-
-            helperImplementationClass = Compiler.getHelperAdapter(this, helperClass, compileToBytecode);
+            helperImplementationClassName  = Compiler.getHelperAdapterName(helperClass, doCompileToBytecode);
+            helperImplementationClass = Compiler.getHelperAdapter(this, helperClass, helperImplementationClassName, doCompileToBytecode);
         }
     }
 
     /**
-     * should rules be compiled to bytecode
-     * @return true if rules should be compiled to bytecode otherwise false
+     * is this rule marked for compilation to bytecode
+     * @return true if this rule is marked for compilation to bytecode otherwise false
      */
     private boolean isCompileToBytecode()
     {
-        return Transformer.isCompileToBytecode();
+        return ruleScript.isCompileToBytecode();
+    }
+
+    /**
+     * should this rule actually be compiled to bytecode
+     * @return true if this rule should actually be compiled to bytecode otherwise false
+     *
+     * this method allows compilation to be overridden when
+     * the trigger class is an inner class, avoiding the most
+     * common case where trying to use bytecode will result in
+     * a verify error. it only applies for overriding or interface
+     * rules because asking for direct injection into an inner
+     * class with compilation enabled is a mistake which deserves
+     * to be punished with failure
+     */
+    private boolean doCompileToBytecode()
+    {
+        boolean compile = ruleScript.isCompileToBytecode();
+
+        if (compile) {
+            // disable compilation if the rule is for an interface
+            // or injects down a hierarchy and the target class
+            // is a non-public 'enclosed' class. compilation will lead
+            // to verify errors because the rule bytecode cannot
+            // access an enclosed class. in these cases interpretation
+            // still works fine because it relies on reflection.
+            //
+            // this is needed to cope with the situation where it may
+            // be legitimate to compile some implementations but not
+            // others. if we don't give the failing cases a free pass
+            // then compilation for the good cases will not be an option.
+            //
+            // n.b. we might reject cases where the trigger CLASS is
+            // the target named in the rule but actually it is
+            // possible to have a non-public (e.g. protected) inner
+            // parent class with public inner subclasses so this is
+            // also potentially a legitimate case
+
+            if (ruleScript.isInterface() || ruleScript.isOverride()) {
+                // yes, we need to check the trigger class
+                Class<?> triggerClazz = typeGroup.lookup(triggerClass).getTargetClass();
+                if (triggerClazz != null && triggerClazz.getEnclosingClass() != null) {
+                    // yes it's not a top level class so it needs to be public to be compiled
+
+                    if((triggerClazz.getModifiers() & Modifier.PUBLIC) == 0) {
+                        // compile = false;
+                        // Helper.verbose("Rule.isCompileToBytecode : disabling compilation for rule " + getName() + " injecting into non-public enclosed class " + triggerClass);
+
+                    }
+                }
+            }
+        }
+        return compile;
     }
 
     private void installParameters(boolean isStatic, String className)
@@ -560,7 +687,7 @@ public class Rule
     {
         Type type;
         // add a binding for the helper so we can call builtin static methods
-        type = typeGroup.create(helperClass.getName());
+        type = typeGroup.create(getHelperClass().getName());
         Binding ruleBinding = bindings.lookup("$$");
         if (ruleBinding != null) {
             ruleBinding.setType(type);
@@ -638,15 +765,12 @@ public class Rule
 
         try {
         Rule rule = ruleKeyMap.get(key);
-        if (Transformer.isVerbose()) {
-            System.out.println("Rule.execute called for " + key);
-        }
+        Helper.verbose("Rule.execute called for " + key);
+
 
         // if the key is no longer present it just means the rule has been decommissioned so return
         if (rule == null) {
-            if (Transformer.isVerbose()) {
-                System.out.println("Rule.execute for decommissioned key " + key);
-            }
+            Helper.verbose("Rule.execute for decommissioned key " + key);
             return;
         }
 
@@ -684,35 +808,35 @@ public class Rule
                 helper.execute(recipient, args);
             } catch (NoSuchMethodException e) {
                 // should not happen!!!
-                System.out.println("cannot find constructor " + helperImplementationClass.getCanonicalName() + "(Rule) for helper class");
-                e.printStackTrace(System.out);
+                Helper.err("cannot find constructor " + helperImplementationClass.getCanonicalName() + "(Rule) for helper class");
+                Helper.errTraceException(e);
                 return;
             } catch (InvocationTargetException e) {
-                e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+                Helper.errTraceException(e);  //To change body of catch statement use File | Settings | File Templates.
             } catch (InstantiationException e) {
                 // should not happen
-                System.out.println("cannot create instance of " + helperImplementationClass.getCanonicalName());
-                e.printStackTrace(System.out);
+                Helper.err("cannot create instance of " + helperImplementationClass.getCanonicalName());
+                Helper.errTraceException(e);
                 return;
             } catch (IllegalAccessException e) {
                 // should not happen
-                System.out.println("cannot access " + helperImplementationClass.getCanonicalName());
-                e.printStackTrace(System.out);
+                Helper.err("cannot access " + helperImplementationClass.getCanonicalName());
+                Helper.errTraceException(e);
                 return;
             } catch (ClassCastException e) {
                 // should not happen
-                System.out.println("cast exception " + helperImplementationClass.getCanonicalName());
-                e.printStackTrace(System.out);
+                Helper.err("cast exception " + helperImplementationClass.getCanonicalName());
+                Helper.errTraceException(e);
                 return;
             } catch (EarlyReturnException e) {
                 throw e;
             } catch (ThrowException e) {
                 throw e;
             } catch (ExecuteException e) {
-                System.out.println(getName() + " : " + e);
+                Helper.err(getName() + " : " + e);
                 throw e;
             } catch (Throwable throwable) {
-                System.out.println(getName() + " : " + throwable);
+                Helper.err(getName() + " : " + throwable);
                 throw new ExecuteException(getName() + "  : caught " + throwable, throwable);
             }
         }
@@ -755,9 +879,6 @@ public class Rule
         // nothing to do unless we actually allocated a key
         if (key != null) {
             ruleKeyMap.remove(key);
-            if (checked) {
-                uninstalled();
-            }
         }
     }
 
@@ -778,11 +899,6 @@ public class Rule
     private synchronized static int nextId()
     {
         return nextId++;
-    }
-
-    private static boolean compileRules()
-    {
-        return Transformer.isCompileToBytecode();
     }
 
     /**
@@ -812,6 +928,25 @@ public class Rule
         stringWriter.write('\n');
         stringWriter.write(getTargetLocation().toString());
         stringWriter.write('\n');
+        String[] imports = ruleScript.getImports();
+        if (imports != null) {
+            for (int i = 0; i < imports.length; i++) {
+                stringWriter.write("IMPORT ");
+                stringWriter.write(imports[i]);
+                stringWriter.append('\n');
+            }
+        }
+        String targetHelper = ruleScript.getTargetHelper();
+        if (targetHelper != null) {
+            stringWriter.write("HELPER ");
+            stringWriter.write(targetHelper);
+            stringWriter.write('\n');
+        }
+        if (ruleScript.isCompileToBytecode()) {
+            stringWriter.write("COMPILE\n");
+        } else {
+            stringWriter.write("NOCOMPILE\n");
+        }
         if (event != null) {
             event.writeTo(stringWriter);
         } else {
@@ -845,6 +980,12 @@ public class Rule
     private Class helperImplementationClass;
 
     /**
+     * the name of the helper implementation class in internal format
+     */
+
+    private String helperImplementationClassName;
+
+    /**
      * a getter allowing the helper class for the rule to be identified
      * 
      * @return the helper
@@ -852,6 +993,36 @@ public class Rule
     public Class getHelperClass()
     {
         return helperClass;
+    }
+
+    /**
+     * method called at start of type check to ensure helper class can be loaded
+     */
+    private void ensureHelperClass() throws TypeException
+    {
+        // we do the load lazily so it doesn't happen under
+        // a Transform, invalidating rule injection
+        if (helperClass == null) {
+            try {
+                helperClass = helperLoader.loadClass(helperToUse);
+            } catch (ClassNotFoundException e) {
+                throw new TypeException("Rule.typecheck : unknown helper class " + helperToUse + " for rule " + getName());
+            }
+        }
+        
+        if (Modifier.isFinal(helperClass.getModifiers())) {
+            throw new TypeException("Rule.typecheck : helper class cannot be final " + helperToUse + " for rule " + getName());
+        }
+    }
+
+    /**
+     * a getter allowing the helper implementation class name for the rule to be identified
+     *
+     * @return the helper
+     */
+    public String getHelperImplementationClassName()
+    {
+        return helperImplementationClassName;
     }
 
     /**
@@ -863,7 +1034,7 @@ public class Rule
      * method called when the rule has been successfully injected into a class, type checked and compiled. it passes
      * the message on to the Transformer so it can perform helper lifecycle management.
      */
-    private void installed()
+    public void installed()
     {
         helperManager.installed(this);
     }
@@ -873,34 +1044,71 @@ public class Rule
      * type checked and compiled. it passes the message on to the Transformer so it can perform helper lifecycle
      * management.
      */
-    private void uninstalled()
+    public void uninstalled()
     {
         helperManager.uninstalled(this);
     }
 
-    public int addAccessibleField(Field field) {
-        if (accessibleFields == null) {
-            accessibleFields = new ArrayList<Field>();
+    public boolean requiresAccess(Type type)
+    {
+        return accessEnabler.requiresAccess(type.getTargetClass());
+    }
+
+    public boolean requiresAccess(Field field)
+    {
+        return accessEnabler.requiresAccess(field);
+    }
+
+    public boolean requiresAccess(Method method)
+    {
+        return accessEnabler.requiresAccess(method);
+    }
+
+    public int addAccessibleFieldGetter(Field field) {
+        if (accessibleFieldGetters == null) {
+            accessibleFieldGetters = new ArrayList<AccessibleFieldGetter>();
         }
-        int index = accessibleFields.size();
-        accessibleFields.add(field);
+        int index = accessibleFieldGetters.size();
+        AccessibleFieldGetter getter = accessEnabler.createFieldGetter(field);
+        accessibleFieldGetters.add(getter);
         return index;
     }
-    
-    public int addAccessibleMethod(Method method) {
-        if (accessibleMethods == null) {
-            accessibleMethods = new ArrayList<Method>();
+
+    public int addAccessibleFieldSetter(Field field) {
+        if (accessibleFieldSetters == null) {
+            accessibleFieldSetters = new ArrayList<AccessibleFieldSetter>();
         }
-        int index = accessibleMethods.size();
-        accessibleMethods.add(method);
+        int index = accessibleFieldSetters.size();
+        AccessibleFieldSetter setter = accessEnabler.createFieldSetter(field);
+        accessibleFieldSetters.add(setter);
+        return index;
+    }
+
+    public int addAccessibleMethodInvoker(Method method) {
+        if (accessibleMethodInvokers == null) {
+            accessibleMethodInvokers = new ArrayList<AccessibleMethodInvoker>();
+        }
+        int index = accessibleMethodInvokers.size();
+        AccessibleMethodInvoker invoker = accessEnabler.createMethodInvoker(method);
+        accessibleMethodInvokers.add(invoker);
+        return index;
+    }
+
+    public int addAccessibleConstructorInvoker(Constructor constructor) {
+        if (accessibleConstructorInvokers == null) {
+            accessibleConstructorInvokers = new ArrayList<AccessibleConstructorInvoker>();
+        }
+        int index = accessibleConstructorInvokers.size();
+        AccessibleConstructorInvoker invoker = accessEnabler.createConstructorInvoker(constructor);
+        accessibleConstructorInvokers.add(invoker);
         return index;
     }
 
     public Object getAccessibleField(Object owner, int fieldIndex) throws ExecuteException
     {
         try {
-            Field field = accessibleFields.get(fieldIndex);
-            return field.get(owner);
+            AccessibleFieldGetter getter = accessibleFieldGetters.get(fieldIndex);
+            return getter.get(owner);
         } catch (Exception e) {
             throw new  ExecuteException("Rule.getAccessibleField : unexpected error getting non-public field in rule " + getName(), e);
         }
@@ -909,8 +1117,8 @@ public class Rule
     public void setAccessibleField(Object owner, Object value, int fieldIndex) throws ExecuteException
     {
         try {
-            Field field = accessibleFields.get(fieldIndex);
-            field.set(owner, value);
+            AccessibleFieldSetter setter = accessibleFieldSetters.get(fieldIndex);
+            setter.set(owner, value);
         } catch (Exception e) {
             throw new  ExecuteException("Rule.setAccessibleField : unexpected error setting non-public field in rule " + getName(), e);
         }
@@ -919,8 +1127,18 @@ public class Rule
     public Object invokeAccessibleMethod(Object target, Object[] args, int methodIndex)
     {
         try {
-            Method method = accessibleMethods.get(methodIndex);
-            return method.invoke(target, args);
+            AccessibleMethodInvoker invoker = accessibleMethodInvokers.get(methodIndex);
+            return invoker.invoke(target, args);
+        } catch (Exception e) {
+            throw new  ExecuteException("Rule.invokeAccessibleMethod : unexpected error invoking non-public method in rule " + getName(), e);
+        }
+    }
+
+    public void invokeAccessibleConstructor(Object[] args, int methodIndex)
+    {
+        try {
+            AccessibleConstructorInvoker invoker = accessibleConstructorInvokers.get(methodIndex);
+            invoker.invoke(args);
         } catch (Exception e) {
             throw new  ExecuteException("Rule.invokeAccessibleMethod : unexpected error invoking non-public method in rule " + getName(), e);
         }

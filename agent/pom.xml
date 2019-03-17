@@ -23,7 +23,7 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <artifactId>byteman</artifactId>
+    <artifactId>byteman-agent</artifactId>
     <packaging>jar</packaging>
     <description>
         The Byteman agent jar contains the implementation of the Byteman java agent, including
@@ -34,8 +34,19 @@
     <parent>
         <groupId>org.jboss.byteman</groupId>
         <artifactId>byteman-root</artifactId>
-        <version>3.0.1</version>
+        <version>4.0.6-SNAPSHOT</version>
     </parent>
+
+    <properties>
+        <!-- don't install or deploy this jar, instead use it to
+             build the byteman jar which needs to include JDK9 code
+             that deals with modules
+        -->
+        <maven.install.skip>true</maven.install.skip>
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <debug.args>-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005 -Dorg.jboss.byteman.verbose</debug.args>
+    </properties>
+
     <build>
         <plugins>
             <plugin>
@@ -64,7 +75,10 @@
                         <configuration>
                             <artifactSet>
                                 <includes>
-                                    <include>org.ow2.asm:asm-all</include>
+                                    <include>org.ow2.asm:asm</include>
+                                    <include>org.ow2.asm:asm-tree</include>
+                                    <include>org.ow2.asm:asm-analysis</include>
+                                    <include>org.ow2.asm:asm-commons</include>
                                     <include>net.sf.squirrel-sql.thirdparty-non-maven:java-cup</include>
                                 </includes>
                             </artifactSet>
@@ -76,7 +90,25 @@
                                     </includes>
                                 </filter>
                                 <filter>
-                                    <artifact>org.ow2.asm:asm-all</artifact>
+                                    <artifact>org.ow2.asm:asm</artifact>
+                                    <includes>
+                                        <include>org/objectweb/asm/**</include>
+                                    </includes>
+                                </filter>
+                                <filter>
+                                    <artifact>org.ow2.asm:asm-tree</artifact>
+                                    <includes>
+                                        <include>org/objectweb/asm/**</include>
+                                    </includes>
+                                </filter>
+                                <filter>
+                                    <artifact>org.ow2.asm:asm-analysis</artifact>
+                                    <includes>
+                                        <include>org/objectweb/asm/**</include>
+                                    </includes>
+                                </filter>
+                                <filter>
+                                    <artifact>org.ow2.asm:asm-commons</artifact>
                                     <includes>
                                         <include>org/objectweb/asm/**</include>
                                     </includes>
@@ -104,8 +136,21 @@
                 </configuration>
             </plugin>
             <plugin>
+                <!-- here we run most of the tests using the byteman-agent
+                     jar which contains the core JDK8[-] classes compiled
+                     for target 6. the same tests are rerun later by the
+                     test module using the bundled byteman jar which
+                     contains extra JDK9[+] classes compiled for target 9.
+                     The latter module also runs a few extra tests to check
+                     accessibility. Note that all tests are provided in
+                     this module because that is where they were first
+                     created.
+                -->
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <skipTests>false</skipTests>
+                </configuration>
                 <!--
                     we have to do this the hard way by forking each test in a separate VM
                     running the byteman agent and the appropriate script
@@ -123,11 +168,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                          <forkCount>1</forkCount>
+                          <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/javaops/TestArithmetic.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestArithmetic.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestArithmetic.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -138,11 +184,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                          <forkCount>1</forkCount>
+                          <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/javaops/TestArray.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestArray.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestArray.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -153,11 +200,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/javaops/TestAssign.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestAssign.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestAssign.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -168,11 +216,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/javaops/TestComparison.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestComparison.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestComparison.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -183,11 +232,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/javaops/TestField.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestField.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestField.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -198,11 +248,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/javaops/TestLogical.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestLogical.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestLogical.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -213,11 +264,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/javaops/TestMethod.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestMethod.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestMethod.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -228,11 +280,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/javaops/TestNew.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestNew.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestNew.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -243,11 +296,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/javaops/TestClassLiteral.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestClassLiteral.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestClassLiteral.btm</argLine>
                       </configuration>
                     </execution>
                     <!-- location clauses -->
@@ -259,11 +313,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/location/TestAll.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestAll.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestAll.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -274,11 +329,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/location/TestCall.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestCall.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestCall.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -289,11 +345,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/location/TestEntry.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestEntry.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestEntry.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -304,11 +361,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/location/TestExit.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestExit.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestExit.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -319,12 +377,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/location/TestExceptionExit.class</include>
                          </includes>
-                         <!-- -Dorg.jboss.byteman.verbose -Dorg.jboss.byteman.debug  -->
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestExceptionExit.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestExceptionExit.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -335,11 +393,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/location/TestLine.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestLine.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestLine.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -350,11 +409,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/location/TestReadWrite.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestReadWrite.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestReadWrite.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -365,11 +425,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/location/TestReadWriteParams.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestReadWriteParams.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestReadWriteParams.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -380,11 +441,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/location/TestSynch.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestSynch.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestSynch.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -395,11 +457,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/location/TestThrow.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestThrow.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestThrow.btm</argLine>
                       </configuration>
                     </execution>
                     <!-- builtin helper methods -->
@@ -411,11 +474,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/helpertests/TestCallerMatches.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/helpertests/TestCallerMatches.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/helpertests/TestCallerMatches.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -426,11 +490,28 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/helpertests/TestStackTrace.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/helpertests/TestStackTrace.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/helpertests/TestStackTrace.btm</argLine>
+                      </configuration>
+                    </execution>
+                    <execution>
+                      <id>helpertests.TestLinkMap</id>
+                      <phase>integration-test</phase>
+                      <goals>
+                        <goal>integration-test</goal>
+                        <goal>verify</goal>
+                      </goals>
+                      <configuration>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
+                         <includes>
+                           <include>org/jboss/byteman/tests/helpertests/TestLinkMap.class</include>
+                         </includes>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/helpertests/TestLinkMap.btm</argLine>
                       </configuration>
                     </execution>
                     <!-- miscellaneous tests -->
@@ -442,11 +523,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/misc/TestInterfaceInjection.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestInterfaceInjection.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestInterfaceInjection.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -457,11 +539,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/misc/TestInvokeParamBinding.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestInvokeParamBinding.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestInvokeParamBinding.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -472,11 +555,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/misc/TestOverridingInjection.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestOverridingInjection.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestOverridingInjection.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -487,11 +571,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/misc/TestOverridingInterfaceInjection.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestOverridingInterfaceInjection.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestOverridingInterfaceInjection.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -502,11 +587,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/misc/TestParamBinding.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestParamBinding.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestParamBinding.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -517,11 +603,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/misc/TestRecursiveTriggers.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestRecursiveTriggers.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestRecursiveTriggers.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -532,11 +619,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/misc/TestReturnBindingAssignment.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestReturnBindingAssignment.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestReturnBindingAssignment.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -547,11 +635,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/misc/TestReturnBinding.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestReturnBinding.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestReturnBinding.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -562,11 +651,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/misc/TestThrowBinding.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestThrowBinding.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestThrowBinding.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -577,14 +667,14 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/misc/TestTriggerClassMethodBinding.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestTriggerClassMethodBinding.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestTriggerClassMethodBinding.btm</argLine>
                       </configuration>
                     </execution>
-                    <!--
                     <execution>
                       <id>misc.TestDowncast</id>
                       <phase>integration-test</phase>
@@ -593,14 +683,14 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/misc/TestDowncast.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestDowncast.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestDowncast.btm</argLine>
                       </configuration>
                     </execution>
-                    -->
                     <!-- bugfixes -->
                     <execution>
                       <id>bugfixes.TestEmptySignature</id>
@@ -610,11 +700,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestEmptySignature.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestEmptySignature.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestEmptySignature.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -625,11 +716,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestEnclosedSynchronizationPropagation.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestEnclosedSynchronizationPropagation.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestEnclosedSynchronizationPropagation.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -640,11 +732,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestInterfaceHierarchy.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestInterfaceHierarchy.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestInterfaceHierarchy.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -655,11 +748,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestMethodActualAgainstFormal.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMethodActualAgainstFormal.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMethodActualAgainstFormal.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -670,11 +764,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestMethodClauseReturnType.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMethodClauseReturnType.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMethodClauseReturnType.btm</argLine>
                       </configuration>
                     </execution>
                     <!-- dynamic rule submission
@@ -692,11 +787,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestMethodClauseReturnTypeDynamic.class</include>
                          </includes>
-                          <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=listener:true</argLine>
+                          <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=listener:true</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -707,11 +803,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestMethodParamAssign.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMethodParamAssign.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMethodParamAssign.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -722,11 +819,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestMethodParamName.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMethodParamName.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMethodParamName.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -737,11 +835,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestMultiMethodMatch.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMultiMethodMatch.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMultiMethodMatch.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -752,11 +851,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestPromotePrimitiveToObject.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestPromotePrimitiveToObject.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestPromotePrimitiveToObject.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -767,11 +867,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestStringAsCharSequence.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestStringAsCharSequence.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestStringAsCharSequence.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -782,11 +883,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestThrowAction.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestThrowAction.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestThrowAction.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -797,11 +899,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestThrowError.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestThrowError.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestThrowError.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -812,11 +915,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestThrowRuleInjection.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestThrowRuleInjection.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestThrowRuleInjection.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -827,11 +931,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestWaitAfterSignalWakeMustMeet.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestWaitAfterSignalWakeMustMeet.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestWaitAfterSignalWakeMustMeet.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -842,11 +947,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestThrowRuntimeException.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestThrowRuntimeException.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestThrowRuntimeException.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -857,11 +963,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestAfterCallAssign.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestAfterCallAssign.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestAfterCallAssign.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -872,11 +979,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestAbstractInterfaceCall.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestAbstractInterfaceCall.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestAbstractInterfaceCall.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -887,11 +995,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestMaxStackComputation.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMaxStackComputation.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMaxStackComputation.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -902,11 +1011,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestBooleanComparisons.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestBooleanComparisons.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestBooleanComparisons.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -917,11 +1027,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestStackHeight.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestStackHeight.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestStackHeight.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -932,11 +1043,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestLocalUpdateType.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestLocalUpdateType.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestLocalUpdateType.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -947,11 +1059,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestRendezvousTimeout.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestRendezvousTimeout.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestRendezvousTimeout.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -962,11 +1075,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestJoinWaitTimeout.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestJoinWaitTimeout.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestJoinWaitTimeout.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -977,11 +1091,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestPlusExpressionCoerce.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestPlusExpressionCoerce.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestPlusExpressionCoerce.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -992,11 +1107,92 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestArrayArgTypeCheck.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestArrayArgTypeCheck.btm</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestArrayArgTypeCheck.btm</argLine>
+                      </configuration>
+                    </execution>
+                    <execution>
+                      <id>bugfixes.TestBooleanLocal</id>
+                      <phase>integration-test</phase>
+                      <goals>
+                        <goal>integration-test</goal>
+                        <goal>verify</goal>
+                      </goals>
+                      <configuration>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
+                         <includes>
+                           <include>org/jboss/byteman/tests/bugfixes/TestBooleanLocal.class</include>
+                         </includes>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestBooleanLocal.btm</argLine>
+                      </configuration>
+                    </execution>
+                    <execution>
+                      <id>bugfixes.TestDoubleEntryBookKeeping</id>
+                      <phase>integration-test</phase>
+                      <goals>
+                        <goal>integration-test</goal>
+                        <goal>verify</goal>
+                      </goals>
+                      <configuration>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
+                         <includes>
+                           <include>org/jboss/byteman/tests/bugfixes/TestDoubleEntryBookKeeping.class</include>
+                         </includes>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestDoubleEntryBookKeeping.btm</argLine>
+                      </configuration>
+                    </execution>
+                    <execution>
+                      <id>bugfixes.TestConstructorArgUpcast</id>
+                      <phase>integration-test</phase>
+                      <goals>
+                        <goal>integration-test</goal>
+                        <goal>verify</goal>
+                      </goals>
+                      <configuration>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
+                         <includes>
+                           <include>org/jboss/byteman/tests/bugfixes/TestConstructorArgUpcast.class</include>
+                         </includes>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestConstructorArgUpcast.btm</argLine>
+                      </configuration>
+                    </execution>
+                    <execution>
+                      <id>bugfixes.TestBindNull</id>
+                      <phase>integration-test</phase>
+                      <goals>
+                        <goal>integration-test</goal>
+                        <goal>verify</goal>
+                      </goals>
+                      <configuration>
+                          <forkCount>1</forkCount>
+                          <reuseForks>true</reuseForks>
+                         <includes>
+                           <include>org/jboss/byteman/tests/bugfixes/TestBindNull.class</include>
+                         </includes>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestBindNull.btm</argLine>
+                      </configuration>
+                    </execution>
+                    <execution>
+                      <id>javaops.TestInnerClasses</id>
+                      <phase>integration-test</phase>
+                      <goals>
+                        <goal>integration-test</goal>
+                        <goal>verify</goal>
+                      </goals>
+                      <configuration>
+                          <forkCount>1</forkCount>
+                          <reuseForks>true</reuseForks>
+                         <includes>
+                           <include>org/jboss/byteman/tests/bugfixes/TestInnerClasses.class</include>
+                         </includes>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestInnerClasses.btm</argLine>
                       </configuration>
                     </execution>
                     <!-- dynamic rule submission
@@ -1011,11 +1207,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/submit/TestSubmit.class</include>
                          </includes>
-                         <argLine>-javaagent:${project.build.directory}/byteman-${project.version}.jar=listener:true</argLine>
+                         <argLine>-javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=listener:true</argLine>
                       </configuration>
                     </execution>
                     <!-- now the executions for the compiled rules -->
@@ -1028,11 +1225,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/javaops/TestArithmetic.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestArithmetic.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestArithmetic.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1043,11 +1241,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/javaops/TestArray.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestArray.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestArray.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1058,11 +1257,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/javaops/TestAssign.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestAssign.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestAssign.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1073,11 +1273,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/javaops/TestComparison.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestComparison.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestComparison.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1088,11 +1289,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/javaops/TestField.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestField.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestField.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1103,11 +1305,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/javaops/TestLogical.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestLogical.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestLogical.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1118,11 +1321,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/javaops/TestMethod.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestMethod.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestMethod.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1133,11 +1337,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/javaops/TestNew.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestNew.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestNew.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1148,11 +1353,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/javaops/TestClassLiteral.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestClassLiteral.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/javaops/TestClassLiteral.btm</argLine>
                         </configuration>
                     </execution>
                     <!-- location clauses compiled -->
@@ -1164,11 +1370,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/location/TestAll.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestAll.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestAll.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1179,11 +1386,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/location/TestCall.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestCall.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestCall.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1194,11 +1402,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/location/TestEntry.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestEntry.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestEntry.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1209,11 +1418,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/location/TestExit.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestExit.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestExit.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1224,11 +1434,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/location/TestExceptionExit.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestExceptionExit.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestExceptionExit.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1239,11 +1450,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/location/TestLine.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestLine.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestLine.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1254,11 +1466,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/location/TestReadWrite.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestReadWrite.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestReadWrite.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1269,11 +1482,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/location/TestReadWriteParams.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestReadWriteParams.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestReadWriteParams.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1284,11 +1498,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/location/TestSynch.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestSynch.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestSynch.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1299,11 +1514,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/location/TestThrow.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestThrow.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/location/TestThrow.btm</argLine>
                         </configuration>
                     </execution>
                     <!-- builtin methods compiled -->
@@ -1315,11 +1531,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/helpertests/TestCallerMatches.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/helpertests/TestCallerMatches.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/helpertests/TestCallerMatches.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1330,11 +1547,28 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/helpertests/TestStackTrace.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/helpertests/TestStackTrace.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/helpertests/TestStackTrace.btm</argLine>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>helpertests.TestLinkMap.compiled</id>
+                        <phase>integration-test</phase>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                        <configuration>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
+                            <includes>
+                                <include>org/jboss/byteman/tests/helpertests/TestLinkMap.class</include>
+                            </includes>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/helpertests/TestLinkMap.btm</argLine>
                         </configuration>
                     </execution>
                     <!-- miscellenaeous tests compiled -->
@@ -1346,11 +1580,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/misc/TestInterfaceInjection.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestInterfaceInjection.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestInterfaceInjection.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1361,11 +1596,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/misc/TestInvokeParamBinding.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestInvokeParamBinding.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestInvokeParamBinding.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1376,11 +1612,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/misc/TestOverridingInjection.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestOverridingInjection.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestOverridingInjection.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1391,11 +1628,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/misc/TestOverridingInterfaceInjection.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestOverridingInterfaceInjection.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestOverridingInterfaceInjection.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1406,11 +1644,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/misc/TestParamBinding.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestParamBinding.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestParamBinding.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1421,11 +1660,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/misc/TestRecursiveTriggers.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestRecursiveTriggers.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestRecursiveTriggers.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1436,11 +1676,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/misc/TestReturnBindingAssignment.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestReturnBindingAssignment.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestReturnBindingAssignment.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1451,11 +1692,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/misc/TestReturnBinding.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestReturnBinding.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestReturnBinding.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1466,11 +1708,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/misc/TestThrowBinding.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestThrowBinding.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestThrowBinding.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1481,11 +1724,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/misc/TestTriggerClassMethodBinding.class</include>
                          </includes>
-                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestTriggerClassMethodBinding.btm</argLine>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestTriggerClassMethodBinding.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -1496,11 +1740,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/misc/TestDowncast.class</include>
                          </includes>
-                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestDowncast.btm</argLine>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/misc/TestDowncast.btm</argLine>
                       </configuration>
                     </execution>
                     <!-- bugfixes compiled -->
@@ -1512,11 +1757,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/bugfixes/TestEmptySignature.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestEmptySignature.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestEmptySignature.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1527,11 +1773,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/bugfixes/TestEnclosedSynchronizationPropagation.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestEnclosedSynchronizationPropagation.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestEnclosedSynchronizationPropagation.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1542,11 +1789,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/bugfixes/TestInterfaceHierarchy.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestInterfaceHierarchy.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestInterfaceHierarchy.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1557,11 +1805,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/bugfixes/TestMethodActualAgainstFormal.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMethodActualAgainstFormal.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMethodActualAgainstFormal.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1572,11 +1821,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/bugfixes/TestMethodClauseReturnType.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMethodClauseReturnType.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMethodClauseReturnType.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1587,11 +1837,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/bugfixes/TestMethodParamAssign.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMethodParamAssign.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMethodParamAssign.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1602,11 +1853,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/bugfixes/TestMethodParamName.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMethodParamName.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMethodParamName.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1617,11 +1869,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/bugfixes/TestMultiMethodMatch.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMultiMethodMatch.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMultiMethodMatch.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1632,11 +1885,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/bugfixes/TestPromotePrimitiveToObject.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestPromotePrimitiveToObject.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestPromotePrimitiveToObject.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1647,11 +1901,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/bugfixes/TestStringAsCharSequence.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestStringAsCharSequence.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestStringAsCharSequence.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1662,11 +1917,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/bugfixes/TestThrowAction.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestThrowAction.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestThrowAction.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1677,11 +1933,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/bugfixes/TestThrowError.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestThrowError.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestThrowError.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1692,11 +1949,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/bugfixes/TestThrowRuleInjection.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestThrowRuleInjection.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestThrowRuleInjection.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1707,11 +1965,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/bugfixes/TestWaitAfterSignalWakeMustMeet.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestWaitAfterSignalWakeMustMeet.btm</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestWaitAfterSignalWakeMustMeet.btm</argLine>
                         </configuration>
                     </execution>
                     <execution>
@@ -1722,11 +1981,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestThrowRuntimeException.class</include>
                          </includes>
-                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestThrowRuntimeException.btm</argLine>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestThrowRuntimeException.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -1737,11 +1997,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestAfterCallAssign.class</include>
                          </includes>
-                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestAfterCallAssign.btm</argLine>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestAfterCallAssign.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -1752,11 +2013,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestAbstractInterfaceCall.class</include>
                          </includes>
-                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestAbstractInterfaceCall.btm</argLine>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestAbstractInterfaceCall.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -1767,11 +2029,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestMaxStackComputation.class</include>
                          </includes>
-                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMaxStackComputation.btm</argLine>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestMaxStackComputation.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -1782,11 +2045,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestBooleanComparisons.class</include>
                          </includes>
-                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestBooleanComparisons.btm</argLine>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestBooleanComparisons.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -1797,11 +2061,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestStackHeight.class</include>
                          </includes>
-                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestStackHeight.btm</argLine>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestStackHeight.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -1812,11 +2077,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestLocalUpdateType.class</include>
                          </includes>
-                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestLocalUpdateType.btm</argLine>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestLocalUpdateType.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -1827,11 +2093,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestRendezvousTimeout.class</include>
                          </includes>
-                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestRendezvousTimeout.btm</argLine>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestRendezvousTimeout.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -1842,11 +2109,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestJoinWaitTimeout.class</include>
                          </includes>
-                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestJoinWaitTimeout.btm</argLine>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestJoinWaitTimeout.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -1857,11 +2125,12 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestPlusExpressionCoerce.class</include>
                          </includes>
-                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestPlusExpressionCoerce.btm</argLine>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestPlusExpressionCoerce.btm</argLine>
                       </configuration>
                     </execution>
                     <execution>
@@ -1872,11 +2141,92 @@
                         <goal>verify</goal>
                       </goals>
                       <configuration>
-                         <forkMode>once</forkMode>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
                          <includes>
                            <include>org/jboss/byteman/tests/bugfixes/TestArrayArgTypeCheck.class</include>
                          </includes>
-                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestArrayArgTypeCheck.btm</argLine>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestArrayArgTypeCheck.btm</argLine>
+                      </configuration>
+                    </execution>
+                    <execution>
+                      <id>bugfixes.TestBooleanLocal.compiled</id>
+                      <phase>integration-test</phase>
+                      <goals>
+                        <goal>integration-test</goal>
+                        <goal>verify</goal>
+                      </goals>
+                      <configuration>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
+                         <includes>
+                           <include>org/jboss/byteman/tests/bugfixes/TestBooleanLocal.class</include>
+                         </includes>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestBooleanLocal.btm</argLine>
+                      </configuration>
+                    </execution>
+                    <execution>
+                      <id>bugfixes.TestDoubleEntryBookKeeping.compiled</id>
+                      <phase>integration-test</phase>
+                      <goals>
+                        <goal>integration-test</goal>
+                        <goal>verify</goal>
+                      </goals>
+                      <configuration>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
+                         <includes>
+                           <include>org/jboss/byteman/tests/bugfixes/TestDoubleEntryBookKeeping.class</include>
+                         </includes>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestDoubleEntryBookKeeping.btm</argLine>
+                      </configuration>
+                    </execution>
+                    <execution>
+                      <id>bugfixes.TestConstructorArgUpcast.compiled</id>
+                      <phase>integration-test</phase>
+                      <goals>
+                        <goal>integration-test</goal>
+                        <goal>verify</goal>
+                      </goals>
+                      <configuration>
+                         <forkCount>1</forkCount>
+                         <reuseForks>true</reuseForks>
+                         <includes>
+                           <include>org/jboss/byteman/tests/bugfixes/TestConstructorArgUpcast.class</include>
+                         </includes>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestConstructorArgUpcast.btm</argLine>
+                      </configuration>
+                    </execution>
+                    <execution>
+                      <id>javaops.TestInnerClasses.compiled</id>
+                      <phase>integration-test</phase>
+                      <goals>
+                        <goal>integration-test</goal>
+                        <goal>verify</goal>
+                      </goals>
+                      <configuration>
+                          <forkCount>1</forkCount>
+                          <reuseForks>true</reuseForks>
+                         <includes>
+                           <include>org/jboss/byteman/tests/bugfixes/TestInnerClasses.class</include>
+                         </includes>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestInnerClasses.btm</argLine>
+                      </configuration>
+                    </execution>
+                    <execution>
+                      <id>bugfixes.TestBindNull.compiled</id>
+                      <phase>integration-test</phase>
+                      <goals>
+                        <goal>integration-test</goal>
+                        <goal>verify</goal>
+                      </goals>
+                      <configuration>
+                          <forkCount>1</forkCount>
+                          <reuseForks>true</reuseForks>
+                         <includes>
+                           <include>org/jboss/byteman/tests/bugfixes/TestBindNull.class</include>
+                         </includes>
+                         <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=script:${project.build.testOutputDirectory}/scripts/bugfixes/TestBindNull.btm</argLine>
                       </configuration>
                     </execution>
                     <!-- dynamic rule submission compiled
@@ -1891,11 +2241,12 @@
                             <goal>verify</goal>
                         </goals>
                         <configuration>
-                            <forkMode>once</forkMode>
+                            <forkCount>1</forkCount>
+                            <reuseForks>true</reuseForks>
                             <includes>
                                 <include>org/jboss/byteman/tests/submit/TestSubmit.class</include>
                             </includes>
-                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=listener:true</argLine>
+                            <argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=listener:true</argLine>
                         </configuration>
                     </execution>
 					<!-- check rules -->
@@ -1907,12 +2258,13 @@
                             <goal>verify</goal>
                         </goals>
 						<configuration>
-                            <forkMode>once</forkMode>
-							<test>TestRuleCheck</test>
+                            <forkCount>1</forkCount>
+                            <reuseForks>true</reuseForks>
+                            <test>TestRuleCheck</test>
                             <includes>
                                 <include>org/jboss/byteman/tests/check/TestRuleCheck.class</include>
                             </includes>
-							<argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-${project.version}.jar=listener:true</argLine>
+							<argLine>-Dorg.jboss.byteman.compile.to.bytecode -javaagent:${project.build.directory}/byteman-agent-${project.version}.jar=listener:true</argLine>
                         </configuration>
 					</execution>
                 </executions>
@@ -1927,6 +2279,7 @@
                 <artifactId>maven-verifier-plugin</artifactId>
                 <configuration>
                     <verificationFile>verification.xml</verificationFile>
+                    <failOnError>true</failOnError>
                 </configuration>
                 <executions>
                     <execution>
@@ -1942,36 +2295,15 @@
     </build>
     <profiles>
         <profile>
-            <!-- this always active profile forces inclusion of
-            asm-all jar unless the profile is explicitly deactivated
-           -->
-            <id>default</id>
-            <activation>
-                <file>
-                    <exists>${java.home}</exists>
-                </file>
-            </activation>
-            <dependencies>
-                <dependency>
-                    <groupId>org.ow2.asm</groupId>
-                    <artifactId>asm-all</artifactId>
-                    <scope>compile</scope>
-                </dependency>
-            </dependencies>
-        </profile>
-        <profile>
             <!--
               during development we want asm classes to appear in
               their correct package so we can step through the asm
-              code in the debugger. so we need to use jar
-              asm-debug-all instead of jar asm-all
+              code in the debugger.
               use command
 
-                  mvn -P '!default,asmdebug' install
+                  mvn -P 'asmdebug' install
 
-              to disable the always on default profile (which provides
-              the dependency on jar asm-all) and enable this profile
-              (which provides the dependency on jar asm-debug-all)
+              to exclude asm classes from the shade relocations
             -->
             <id>asmdebug</id>
             <build>
@@ -1988,8 +2320,11 @@
                           <configuration>
                             <artifactSet>
                               <includes>
-                                <include>org.ow2.asm:asm-debug-all</include>
-                                <include>net.sf.squirrel-sql.thirdparty-non-maven:java-cup</include>
+                                  <include>org.ow2.asm:asm</include>
+                                  <include>org.ow2.asm:asm-tree</include>
+                                  <include>org.ow2.asm:asm-analysis</include>
+                                  <include>org.ow2.asm:asm-commons</include>
+                                  <include>net.sf.squirrel-sql.thirdparty-non-maven:java-cup</include>
                               </includes>
                             </artifactSet>
                             <filters>
@@ -1999,18 +2334,40 @@
                                   <include>java_cup/runtime/**</include>
                                 </includes>
                               </filter>
-                              <filter>
-                                <artifact>org.ow2.asm:asm-debug-all</artifact>
-                                <includes>
-                                  <include>org/objectweb/asm/**</include>
-                                </includes>
-                              </filter>
+                                <filter>
+                                  <artifact>org.ow2.asm:asm</artifact>
+                                  <includes>
+                                    <include>org/objectweb/asm/**</include>
+                                  </includes>
+                                </filter>
+                                <filter>
+                                  <artifact>org.ow2.asm:asm-tree</artifact>
+                                  <includes>
+                                    <include>org/objectweb/asm/**</include>
+                                  </includes>
+                                </filter>
+                                <filter>
+                                  <artifact>org.ow2.asm:asm-analysis</artifact>
+                                  <includes>
+                                    <include>org/objectweb/asm/**</include>
+                                  </includes>
+                                </filter>
+                                <filter>
+                                  <artifact>org.ow2.asm:asm-commons</artifact>
+                                  <includes>
+                                    <include>org/objectweb/asm/**</include>
+                                  </includes>
+                                </filter>
                             </filters>
                             <relocations>
-                              <relocation>
-                                <pattern>java_cup.runtime</pattern>
-                                <shadedPattern>org.jboss.byteman.java_cup.runtime</shadedPattern>
-                              </relocation>
+                                <relocation>
+                                    <pattern>org.objectweb.asm</pattern>
+                                    <shadedPattern>org.pobjectweb.asm</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                  <pattern>java_cup.runtime</pattern>
+                                  <shadedPattern>org.jboss.byteman.java_cup.runtime</shadedPattern>
+                                </relocation>
                             </relocations>
                           </configuration>
                         </execution>
@@ -2018,14 +2375,6 @@
                     </plugin>
                 </plugins>
             </build>
-            <dependencies>
-              <dependency>
-                <groupId>org.ow2.asm</groupId>
-                <artifactId>asm-debug-all</artifactId>
-                <version>5.0.3</version>
-                <scope>compile</scope>
-              </dependency>
-            </dependencies>
         </profile>
         <profile>
             <id>parser</id>
@@ -2076,11 +2425,54 @@
             </dependencies>
 
         </profile>
+        <!--
+            the parser generator omits to generate some necessary
+            javadoc attributes in the generated code. so we have
+            to escape doclint errors which arise when using jdk9
+            and later jdk8 versions
+        -->
+        <profile>
+            <id>fix javadoc lint errors</id>
+            <build>
+                <plugins>
+                    <!-- switch off errors for missing javadoc fields -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <configuration>
+                            <additionalparam>-Xdoclint:-missing</additionalparam>
+                        </configuration>
+                    </plugin>
+
+                </plugins>
+            </build>
+        </profile>
     </profiles>
     <dependencies>
         <dependency>
+            <groupId>org.ow2.asm</groupId>
+            <artifactId>asm</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.ow2.asm</groupId>
+            <artifactId>asm-tree</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.ow2.asm</groupId>
+            <artifactId>asm-analysis</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.ow2.asm</groupId>
+            <artifactId>asm-commons</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
             <groupId>net.sf.squirrel-sql.thirdparty-non-maven</groupId>
             <artifactId>java-cup</artifactId>
+            <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>junit</groupId>

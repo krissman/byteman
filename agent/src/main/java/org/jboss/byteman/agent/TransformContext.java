@@ -29,21 +29,18 @@ import org.jboss.byteman.agent.adapter.BMLocalScopeAdapter;
 import org.jboss.byteman.agent.adapter.RuleCheckAdapter;
 import org.jboss.byteman.agent.adapter.RuleTriggerAdapter;
 import org.jboss.byteman.agent.check.ClassChecker;
-import org.jboss.byteman.rule.exception.CompileException;
 import org.jboss.byteman.rule.exception.ParseException;
 import org.jboss.byteman.rule.exception.TypeException;
 import org.jboss.byteman.rule.exception.TypeWarningException;
-import org.jboss.byteman.rule.type.Type;
+import org.jboss.byteman.rule.helper.Helper;
 import org.jboss.byteman.rule.type.TypeHelper;
 import org.jboss.byteman.rule.Rule;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedList;
-import java.util.List;
 
 /**
  * Class used to localise the context information employed when creating a rule from a rule script and
@@ -51,7 +48,7 @@ import java.util.List;
  */
 public class TransformContext
 {
-    public TransformContext(Transformer transformer, RuleScript ruleScript, String triggerClassName, ClassLoader loader, HelperManager helperManager)
+    public TransformContext(Transformer transformer, RuleScript ruleScript, String triggerClassName, ClassLoader loader, HelperManager helperManager, AccessEnabler accessEnabler)
     {
         // the target method spec may just be a bare method name or it may optionally include a
         // parameter type list and a return type. With Java syntax the return type appears before
@@ -69,8 +66,8 @@ public class TransformContext
         this.helperManager = helperManager;
         this.ruleMap = new HashMap<String, Rule>();
         this.firstRule = null;
-
-
+        this.accessEnabler = accessEnabler;
+        this.failed = false;
     }
 
     public byte[] transform(byte[] targetClassBytes)
@@ -78,18 +75,25 @@ public class TransformContext
         final Location handlerLocation = ruleScript.getTargetLocation();
 
         String ruleName = ruleScript.getName();
+
+        // we are about to try to retransform the rule
+        // in the context of a given class and loader
+        // so we can clear any existing transforms
+        // associated with this rule's script
+        // which specify the same class and loader
+
+        ruleScript.purge(loader, triggerClassName);
+
         try {
             parseRule();
         } catch (ParseException pe) {
-            if (Transformer.isVerbose()) {
-                System.out.println("org.jboss.byteman.agent.Transformer : error parsing rule " + ruleName + "\n" + pe);
-            }
+            Helper.verbose("org.jboss.byteman.agent.Transformer : error parsing rule " + ruleName + "\n" + pe);
+            Helper.verboseTraceException(pe);
             recordFailedTransform(pe);
             return targetClassBytes;
         } catch (Throwable th) {
-            if (Transformer.isVerbose()) {
-                System.out.println("org.jboss.byteman.agent.Transformer : unexpected error parsing rule " + ruleName + "\n" + th);
-            }
+            Helper.verbose("org.jboss.byteman.agent.Transformer : unexpected error parsing rule " + ruleName + "\n" + th);
+            Helper.verboseTraceException(th);
             recordFailedTransform(th);
             return targetClassBytes;
         }
@@ -124,10 +128,9 @@ public class TransformContext
             return targetClassBytes;
         } catch (Throwable th) {
             // hmm, unexpected error
-            if (Transformer.isVerbose()) {
-                System.out.println("org.jboss.byteman.agent.Transformer : unexpected error applying rule " + ruleScript.getName() + " to class " + triggerClassName + "\n" + th);
-                th.printStackTrace(System.out);
-            }
+            Helper.verbose("org.jboss.byteman.agent.Transformer : unexpected error applying rule " + ruleScript.getName() + " to class " + triggerClassName + "\n" + th);
+            Helper.verboseTraceException(th);
+
             recordFailedTransform(th);
             return targetClassBytes;
         }
@@ -137,9 +140,8 @@ public class TransformContext
             return targetClassBytes;
         }
 
-        if (Transformer.isVerbose()) {
-            System.out.println("org.jboss.byteman.agent.Transformer : possible trigger for rule " + ruleScript.getName() + " in class " + triggerClassName);
-        }
+        Helper.verbose("org.jboss.byteman.agent.Transformer : possible trigger for rule " + ruleScript.getName() + " in class " + triggerClassName);
+
         cr = new ClassReader(targetClassBytes);
         ClassWriter cw = getNonLoadingClassWriter(ClassWriter.COMPUTE_MAXS|ClassWriter.COMPUTE_FRAMES);
         RuleTriggerAdapter adapter = handlerLocation.getRuleAdapter(cw, this);
@@ -152,17 +154,15 @@ public class TransformContext
             // will already be notified
             return targetClassBytes;
         } catch (Throwable th) {
-            if (Transformer.isVerbose()) {
-                System.out.println("org.jboss.byteman.agent.Transformer : unexpected error injecting trigger for rule " + ruleScript.getName() + " into class " + triggerClassName + "\n" +  th);
-                th.printStackTrace(System.out);
-            }
+            Helper.verbose("org.jboss.byteman.agent.Transformer : unexpected error injecting trigger for rule " + ruleScript.getName() + " into class " + triggerClassName + "\n" +  th);
+            Helper.verboseTraceException(th);
+
             recordFailedTransform(th);
             return targetClassBytes;
         }
         // hand back the transformed byte code
-        if (Transformer.isVerbose()) {
-            System.out.println("org.jboss.byteman.agent.Transformer : inserted trigger for " + ruleScript.getName() + " in class " + triggerClassName);
-        }
+        Helper.verbose("org.jboss.byteman.agent.Transformer : inserted trigger for " + ruleScript.getName() + " in class " + triggerClassName);
+
 
         // record all successfully transformed rules
 
@@ -175,7 +175,7 @@ public class TransformContext
     }
 
     public void parseRule() throws Exception {
-        Rule rule = Rule.create(ruleScript, loader, helperManager);
+        Rule rule = Rule.create(ruleScript, loader, helperManager, accessEnabler);
         // stash this rule away under the class name so we can reuse it for the first matching method
         ruleMap.put(triggerClassName, rule);
         // keep a handle on the first rule
@@ -214,7 +214,7 @@ public class TransformContext
 
         if (rule == null) {
             try {
-                rule = Rule.create(ruleScript, loader, helperManager);
+                rule = Rule.create(ruleScript, loader, helperManager, accessEnabler);
             } catch(Throwable th) {
                 //  will not happen
             }
@@ -259,15 +259,16 @@ public class TransformContext
         TypeException te = new TypeException(message);
         ruleScript.recordTransform(loader, triggerClassName, triggerMethodName, triggerMethodDescriptor, rule, te);
 
-        purgeRules();
+        failed = true;
+
         throw new TransformFailure();
     }
 
     public void recordFailedTransform(Throwable th)
     {
-        ruleScript.recordTransform(loader, triggerClassName, null, null, null, th);
+        ruleScript.recordFailedTransform(loader, triggerClassName, th);
 
-        purgeRules();
+        failed = true;
     }
 
     public boolean matchTargetMethod(int access, String name, String desc)
@@ -318,30 +319,36 @@ public class TransformContext
      */
     private boolean notifyRules()
     {
-        // if we got here then we have performed a successful injection for each rule in the rule map
-        // if the map is empty then we ned to generate a warning that the rule was not injectable
+        // if the map is empty then we need to generate a warning
+        // that the rule was not injectable
 
         if (ruleMap.isEmpty() && firstRule != null) {
             // we parsed the rule but failed ever to inject it
             TypeWarningException twe = new TypeWarningException("failed to find any matching trigger method in class " + TypeHelper.internalizeClass(triggerClassName));
             ruleScript.recordTransform(loader, triggerClassName, null, null, firstRule, twe);
+            return false;
         }
 
-        for (String key : ruleMap.keySet()) {
-            String triggerMethodName = getKeyTriggerMethodName(key);
-            String triggerMethodDescriptor = getKeyTriggerMethodDescriptor(key);
-            Rule rule = ruleMap.get(key);
-            if (!ruleScript.recordTransform(loader, triggerClassName, triggerMethodName, triggerMethodDescriptor, rule, null))
-            {
-                // rule script must have been deleted so purge rules and avoid installing the transformed code
-                purgeRules();
+        if (failed) {
+            // we had an injection failure so purge all successfully
+            // injected rules
+            purgeRules();
 
-                return false;
+            return false;
+        } else {
+            // try to install all successfully injected rules
+            for (String key : ruleMap.keySet()) {
+                String triggerMethodName = getKeyTriggerMethodName(key);
+                String triggerMethodDescriptor = getKeyTriggerMethodDescriptor(key);
+                Rule rule = ruleMap.get(key);
+                if(!ruleScript.recordTransform(loader, triggerClassName, triggerMethodName, triggerMethodDescriptor, rule, null)) {
+                    // rule script must have been deleted so purge rules and avoid installing the transformed code
+                    purgeRules();
+
+                    return false;
+                }
             }
-
         }
-
-        // ok install the transformed code
 
         return true;
     }
@@ -361,7 +368,7 @@ public class TransformContext
     /**
      * return a unique string key identifying a specific rule compiled against some class and method/signature in the
      * context of a specific class loader
-     * @return
+     * @return a unique string key
      */
     private String getRuleKey(String triggerMethodName, String triggerMethodDescriptor)
     {
@@ -612,6 +619,8 @@ public class TransformContext
     private String targetDescriptor;
     private ClassLoader loader;
     private HelperManager helperManager;
+    private AccessEnabler accessEnabler;
+    private boolean failed;
 
     /**
      * a hashmap indexing Rule instances using key classname.methodnameandsig@loaderhashcode. rules are

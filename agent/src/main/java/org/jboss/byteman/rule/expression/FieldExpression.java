@@ -107,7 +107,7 @@ public class FieldExpression extends AssignableExpression
             // this is really a static field reference pointed to by owner so get it to type check
             type = Type.dereference(indirectStatic.typeCheck(expected));
         } else {
-            typeCheckAny();
+            typeCheckAny(false);
 
             if (Type.dereference(expected).isDefined() && !expected.isAssignableFrom(type)) {
                 throw new TypeException("FieldExpresssion.typeCheck : invalid expected type " + expected.getName() + getPos());
@@ -123,7 +123,7 @@ public class FieldExpression extends AssignableExpression
             type = Type.dereference(indirectStatic.typeCheckAssign(expected));
             return type;
         } else {
-            typeCheckAny();
+            typeCheckAny(true);
 
             // we cannot accept an array length access in this position
             if (isArrayLength) {
@@ -176,7 +176,7 @@ public class FieldExpression extends AssignableExpression
         }
     }
 
-    private void typeCheckAny() throws TypeException {
+    private void typeCheckAny(boolean isAssign) throws TypeException {
 
         // ok, type check the owner and then use it to derive the field type
 
@@ -198,7 +198,7 @@ public class FieldExpression extends AssignableExpression
             }
         } else {
             try {
-                field  = lookupField(ownerClazz);
+                field  = lookupField(ownerClazz, isAssign);
             } catch (NoSuchFieldException e) {
                 throw new TypeException("FieldExpresssion.typeCheck : invalid field reference " + ownerType.getName() + " ." + fieldName + getPos());
             }
@@ -235,7 +235,11 @@ public class FieldExpression extends AssignableExpression
                     throw new ExecuteException("FieldExpression.interpret : attempted field indirection through null value " + owner + getPos());
                 }
 
-                return field.get(value);
+                if (isPublicField) {
+                    return field.get(value);
+                } else {
+                    return rule.getAccessibleField(value, fieldIndex);
+                }
             } catch (ExecuteException e) {
                 throw e;
             } catch (IllegalAccessException e) {
@@ -265,12 +269,24 @@ public class FieldExpression extends AssignableExpression
         } else {
             if (isPublicField) {
                 // we can use GETFIELD to access a public field
-                String ownerType = Type.internalName(field.getDeclaringClass());
+                // if the owner type is inaccessible it
+                // will have been presented as a generic Object
+                // and we need to cast it to the declaring type
+                Class<?> declaringClass = field.getDeclaringClass();
+                Type ownerType = owner.getType();
+                Type declaringType = getTypeGroup().ensureType(declaringClass);
+                String declaringTypeName = Type.internalName(declaringClass);
                 String fieldName = field.getName();
                 String fieldType = Type.internalName(field.getType(), true);
                 // compile the owner expression
                 owner.compile(mv, compileContext);
-                mv.visitFieldInsn(Opcodes.GETFIELD, ownerType, fieldName, fieldType);
+                if (rule.requiresAccess(ownerType)) {
+                    // we might be hande an inaccessible object but be
+                    // accessing a field defined by an accessible parent
+                    // class
+                    compileContext.compileTypeConversion(Type.OBJECT, declaringType);
+                }
+                mv.visitFieldInsn(Opcodes.GETFIELD, declaringTypeName, fieldName, fieldType);
                 // we removed the owner and replaced with expected words
                 compileContext.addStackCount(expected - 1);
             } else {
@@ -289,7 +305,7 @@ public class FieldExpression extends AssignableExpression
                 // we popped three words and added one object as result
                 compileContext.addStackCount(-2);
                 // convert Object to primitive or cast to subtype if required
-                compileTypeConversion(Type.OBJECT, type, mv, compileContext);
+                compileContext.compileTypeConversion(Type.OBJECT, type);
             }
         }
         // check the stack height is ok
@@ -380,7 +396,11 @@ public class FieldExpression extends AssignableExpression
                     throw new ExecuteException("FieldExpression.interpret : attempted field indirection through null value " + owner + getPos());
                 }
 
-                field.set(ownerInstance, value);
+                if (isPublicField) {
+                    field.set(ownerInstance, value);
+                } else {
+                    rule.setAccessibleField(ownerInstance, value, fieldIndex);
+                }
                 return value;
             } catch (ExecuteException e) {
                 throw e;
@@ -417,33 +437,58 @@ public class FieldExpression extends AssignableExpression
                 mv.visitInsn(Opcodes.DUP2);
             }
             compileContext.addStackCount(size);
-            // compile the owner expression and swap with the value
+            // compile the owner expression
             owner.compile(mv, compileContext);
-            if (size == 1) {
-                // [.. val val owner] ==> [.. val owner val]
-                mv.visitInsn(Opcodes.SWAP);
-            } else {
-                // we have to use a DUP_X2 and a POP to insert the owner below the two word value
-                // i.e. [.. val1 val2 val1 val2] ==> [.. val1 val2 val1 val2 owner] ==>
-                //              [.. val1 val2 owner val1 val2 owner] ==> [.. val1 val2 owner val1 val2]
-                mv.visitInsn(Opcodes.DUP_X2);
-                compileContext.addStackCount(1);
-                mv.visitInsn(Opcodes.POP);
-                compileContext.addStackCount(-1);
-            }
             if (isPublicField) {
-                // now compile a field update
-                String ownerType = Type.internalName(field.getDeclaringClass());
+                // we can use PUTFIELD to set a public field
+                // if the owner type is inaccessible it
+                // will have been presented as a generic Object
+                // and we need to cast it to the declaring type
+                Class<?> declaringClass = field.getDeclaringClass();
+                Type ownerType = owner.getType();
+                Type declaringType = getTypeGroup().ensureType(declaringClass);
+                String declaringTypeName = Type.internalName(declaringClass);
                 String fieldName = field.getName();
                 String fieldType = Type.internalName(field.getType(), true);
-                mv.visitFieldInsn(Opcodes.PUTFIELD, ownerType, fieldName, fieldType);
+                if (rule.requiresAccess(ownerType)) {
+                    // convert from generic Object to the type of the field owner
+                    compileContext.compileTypeConversion(Type.OBJECT, declaringType);
+                }
+                // swap the owner below the value
+                if (size == 1) {
+                    // [.. val val owner] ==> [.. val owner val]
+                    mv.visitInsn(Opcodes.SWAP);
+                } else {
+                    // we have to use a DUP_X2 and a POP to insert the owner below the two word value
+                    // i.e. [.. val1 val2 val1 val2] ==> [.. val1 val2 val1 val2 owner] ==>
+                    //              [.. val1 val2 owner val1 val2 owner] ==> [.. val1 val2 owner val1 val2]
+                    mv.visitInsn(Opcodes.DUP_X2);
+                    compileContext.addStackCount(1);
+                    mv.visitInsn(Opcodes.POP);
+                    compileContext.addStackCount(-1);
+                }
+                mv.visitFieldInsn(Opcodes.PUTFIELD, declaringTypeName, fieldName, fieldType);
                 // we removed the owner and the value
                 compileContext.addStackCount(- (1 + size));
             } else {
+                // we don't care what type of object the owner is
+                // swap the owner below the value
+                if (size == 1) {
+                    // [.. val val owner] ==> [.. val owner val]
+                    mv.visitInsn(Opcodes.SWAP);
+                } else {
+                    // we have to use a DUP_X2 and a POP to insert the owner below the two word value
+                    // i.e. [.. val1 val2 val1 val2] ==> [.. val1 val2 val1 val2 owner] ==>
+                    //              [.. val1 val2 owner val1 val2 owner] ==> [.. val1 val2 owner val1 val2]
+                    mv.visitInsn(Opcodes.DUP_X2);
+                    compileContext.addStackCount(1);
+                    mv.visitInsn(Opcodes.POP);
+                    compileContext.addStackCount(-1);
+                }
                 // since this is a private field we need to do the update using reflection
                 // box the value to an object if necessary
                 if (type.isPrimitive()) {
-                    compileBox(Type.boxType(type),  mv, compileContext);
+                    compileContext.compileBox(Type.boxType(type));
                 }
                 // stack the helper and then dupx2 it so it goes under the owner and value
                 // [.. val(s) owner  valObj ==> val(s) owner valObj helper ]
@@ -472,12 +517,26 @@ public class FieldExpression extends AssignableExpression
         }
     }
     
-    private Field lookupField(Class<?> ownerClazz) throws NoSuchFieldException
+    private Field lookupField(Class<?> ownerClazz, boolean isAssign) throws NoSuchFieldException
     {
         try {
             Field field = ownerClazz.getField(fieldName);
-            isPublicField = true;
-            return field;
+            Type ownerType = getTypeGroup().ensureType(ownerClazz);
+            // TODO !!! deal with public fields of inaccessible classes !!!
+            // ask rule to check whether we need access
+            if (!rule.requiresAccess(ownerType) && !rule.requiresAccess(field)) {
+                isPublicField = true;
+                return field;
+            } else {
+                isPublicField = false;
+                // register the field with the rule so we can access it later
+                if (!isAssign) {
+                    fieldIndex = rule.addAccessibleFieldGetter(field);
+                } else {
+                    fieldIndex = rule.addAccessibleFieldSetter(field);
+                }
+                return field;
+            }
         } catch (NoSuchFieldException nsfe) {
             // look for a protected or private field with the desired name
             Class<?> nextClass = ownerClazz;
@@ -485,9 +544,12 @@ public class FieldExpression extends AssignableExpression
                 try {
                     field = nextClass.getDeclaredField(fieldName);
                     isPublicField = false;
-                    field.setAccessible(true);
                     // register the field with the rule so we can access it later
-                    fieldIndex = rule.addAccessibleField(field);
+                    if (!isAssign) {
+                        fieldIndex = rule.addAccessibleFieldGetter(field);
+                    } else {
+                        fieldIndex = rule.addAccessibleFieldSetter(field);
+                    }
                     return field;
                 } catch (NoSuchFieldException e) {
                     // continue

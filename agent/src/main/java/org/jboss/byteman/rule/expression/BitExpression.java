@@ -93,7 +93,7 @@ public class BitExpression extends BinaryOperExpression
                         result = 0;
                         break;
                 }
-                return new Byte(result);
+                return Byte.valueOf(result);
             } else if (type == type.S) {
                 short s1 = value1.shortValue();
                 short s2 = value2.shortValue();
@@ -113,7 +113,7 @@ public class BitExpression extends BinaryOperExpression
                         result = 0;
                         break;
                 }
-                return new Short(result);
+                return Short.valueOf(result);
             }  else if (type == type.I) {
                 int i1 = value1.intValue();
                 int i2 = value2.intValue();
@@ -133,7 +133,7 @@ public class BitExpression extends BinaryOperExpression
                         result = 0;
                         break;
                 }
-                return new Integer(result);
+                return Integer.valueOf(result);
             }  else if (type == type.J) {
                 long l1 = value1.longValue();
                 long l2 = value2.longValue();
@@ -153,7 +153,7 @@ public class BitExpression extends BinaryOperExpression
                         result = 0;
                         break;
                 }
-                return new Long(result);
+                return Long.valueOf(result);
             }  else { // (type == type.C)
                 // use integers here but be careful about conversions
                 int s1 = value1.intValue();
@@ -174,7 +174,7 @@ public class BitExpression extends BinaryOperExpression
                         result = 0;
                         break;
                 }
-                return new Integer(result);
+                return Integer.valueOf(result);
             }
         } catch (ExecuteException e) {
             throw e;
@@ -194,9 +194,9 @@ public class BitExpression extends BinaryOperExpression
         Expression oper1 = getOperand(1);
         // compile the operands and make sure the result is our target type
         oper0.compile(mv, compileContext);
-        compileTypeConversion(oper0.getType(), type, mv, compileContext);
+        compileContext.compileTypeConversion(oper0.getType(), type);
         oper1.compile(mv, compileContext);
-        compileTypeConversion(oper1.getType(), type, mv, compileContext);
+        compileContext.compileTypeConversion(oper1.getType(), type);
 
         if (type == Type.B || type == Type.S || type == Type.I) {
             switch (oper)

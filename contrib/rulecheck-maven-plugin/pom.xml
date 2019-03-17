@@ -32,7 +32,7 @@
 	<parent>
 		<groupId>org.jboss.byteman</groupId>
 		<artifactId>byteman-root</artifactId>
-		<version>3.0.1</version>
+		<version>4.0.6-SNAPSHOT</version>
 		<relativePath>../../pom.xml</relativePath>
 	</parent>
 
@@ -72,7 +72,7 @@
 		<dependency>
 			<groupId>org.codehaus.plexus</groupId>
 			<artifactId>plexus-utils</artifactId>
-			<version>3.0.8</version>
+			<version>3.0.21</version>
 		</dependency>
 		<dependency>
 			<groupId>junit</groupId>
@@ -113,8 +113,11 @@
         <profile>
             <id>fix javadoc for jdk9</id>
             <activation>
-                <jdk>1.9</jdk>
+                <jdk>[1.8,)</jdk>
             </activation>
+			<properties>
+				<maven.javadoc.failOnError>false</maven.javadoc.failOnError>
+			</properties>
             <build>
                 <plugins>
                     <!-- switch off errors for missing author and version fields -->

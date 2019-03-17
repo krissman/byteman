@@ -58,6 +58,7 @@ import java.util.List;
 
 import org.jboss.byteman.agent.TransformContext;
 import org.jboss.byteman.rule.Rule;
+import org.jboss.byteman.rule.helper.Helper;
 import org.objectweb.asm.*;
 import org.objectweb.asm.commons.Method;
 import org.objectweb.asm.commons.TableSwitchGenerator;
@@ -333,7 +334,7 @@ public class RuleGeneratorAdapter extends RuleMethodAdapter {
         } else if (value >= Short.MIN_VALUE && value <= Short.MAX_VALUE) {
             visitIntInsn(Opcodes.SIPUSH, value);
         } else {
-            visitLdcInsn(new Integer(value));
+            visitLdcInsn(Integer.valueOf(value));
         }
     }
 
@@ -346,7 +347,7 @@ public class RuleGeneratorAdapter extends RuleMethodAdapter {
         if (value == 0L || value == 1L) {
             visitInsn(Opcodes.LCONST_0 + (int) value);
         } else {
-            visitLdcInsn(new Long(value));
+            visitLdcInsn(Long.valueOf(value));
         }
     }
 
@@ -360,7 +361,7 @@ public class RuleGeneratorAdapter extends RuleMethodAdapter {
         if (bits == 0L || bits == 0x3f800000 || bits == 0x40000000) { // 0..2
             visitInsn(Opcodes.FCONST_0 + (int) value);
         } else {
-            visitLdcInsn(new Float(value));
+            visitLdcInsn(Float.valueOf(value));
         }
     }
 
@@ -374,14 +375,14 @@ public class RuleGeneratorAdapter extends RuleMethodAdapter {
         if (bits == 0L || bits == 0x3ff0000000000000L) { // +0.0d and 1.0d
             visitInsn(Opcodes.DCONST_0 + (int) value);
         } else {
-            visitLdcInsn(new Double(value));
+            visitLdcInsn(Double.valueOf(value));
         }
     }
 
     /**
      * Generates the instruction to push the given value on the stack.
      *
-     * @param value the value to be pushed on the stack. May be <tt>null</tt>.
+     * @param value the value to be pushed on the stack. May be null.
      */
     public void push(final String value) {
         if (value == null) {
@@ -900,7 +901,7 @@ public class RuleGeneratorAdapter extends RuleMethodAdapter {
      * @param type the type of the top two stack values.
      * @param mode how these values must be compared. One of EQ, NE, LT, GE, GT,
      *        LE.
-     * @param label where to jump if the comparison result is <tt>true</tt>.
+     * @param label where to jump if the comparison result is true.
      */
     public void ifCmp(final Type type, final int mode, final Label label) {
         int intOp = -1;
@@ -968,7 +969,7 @@ public class RuleGeneratorAdapter extends RuleMethodAdapter {
      *
      * @param mode how these values must be compared. One of EQ, NE, LT, GE, GT,
      *        LE.
-     * @param label where to jump if the comparison result is <tt>true</tt>.
+     * @param label where to jump if the comparison result is true.
      */
     public void ifICmp(final int mode, final Label label) {
         ifCmp(Type.INT_TYPE, mode, label);
@@ -980,7 +981,7 @@ public class RuleGeneratorAdapter extends RuleMethodAdapter {
      *
      * @param mode how these values must be compared. One of EQ, NE, LT, GE, GT,
      *        LE.
-     * @param label where to jump if the comparison result is <tt>true</tt>.
+     * @param label where to jump if the comparison result is true.
      */
     public void ifZCmp(final int mode, final Label label) {
         visitJumpInsn(mode, label);
@@ -990,7 +991,7 @@ public class RuleGeneratorAdapter extends RuleMethodAdapter {
      * Generates the instruction to jump to the given label if the top stack
      * value is null.
      *
-     * @param label where to jump if the condition is <tt>true</tt>.
+     * @param label where to jump if the condition is true.
      */
     public void ifNull(final Label label) {
         visitJumpInsn(Opcodes.IFNULL, label);
@@ -1000,7 +1001,7 @@ public class RuleGeneratorAdapter extends RuleMethodAdapter {
      * Generates the instruction to jump to the given label if the top stack
      * value is not null.
      *
-     * @param label where to jump if the condition is <tt>true</tt>.
+     * @param label where to jump if the condition is true.
      */
     public void ifNonNull(final Label label) {
         visitJumpInsn(Opcodes.IFNONNULL, label);
@@ -1009,7 +1010,7 @@ public class RuleGeneratorAdapter extends RuleMethodAdapter {
     /**
      * Generates the instruction to jump to the given label.
      *
-     * @param label where to jump if the condition is <tt>true</tt>.
+     * @param label where to jump if the condition is true.
      */
     public void goTo(final Label label) {
         visitJumpInsn(Opcodes.GOTO, label);
@@ -1050,8 +1051,8 @@ public class RuleGeneratorAdapter extends RuleMethodAdapter {
      *
      * @param keys the switch case keys.
      * @param generator a generator to generate the code for the switch cases.
-     * @param useTable <tt>true</tt> to use a TABLESWITCH instruction, or
-     *        <tt>false</tt> to use a LOOKUPSWITCH instruction.
+     * @param useTable true to use a TABLESWITCH instruction, or
+     *        false to use a LOOKUPSWITCH instruction.
      */
     public void tableSwitch(
         final int[] keys,
@@ -1451,6 +1452,9 @@ public class RuleGeneratorAdapter extends RuleMethodAdapter {
             int size = 1;
             Type type = null;
             switch(opcode) {
+                // n.b. this fails to distinguish boolean types
+                // we need to check for them specially when we try
+                // to use a local which is marked as int
                 case Opcodes.ISTORE:
                     type = Type.INT_TYPE;
                 break;
@@ -1612,7 +1616,7 @@ public class RuleGeneratorAdapter extends RuleMethodAdapter {
             dumpType(buffer, stack[i]);
             sepr=",\n    ";
         }
-        System.out.println(buffer.toString());
+        Helper.out(buffer.toString());
     }
 
     private void dumpType(StringBuffer buffer, Object t)

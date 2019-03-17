@@ -60,9 +60,23 @@ public class AssignExpression extends BinaryOperExpression
         // of the lhs.
         // if either operand cannot type check then it will throw an error
 
-        Type type2 = getOperand(1).typeCheck(expected);
-        Type type1 = lhs.typeCheckAssign(type2);
-        type = type1;
+        // if we are assigning a variable and we have no expected type
+        // or it is void then type check the bind var against undefined
+        // first and then push the bind var type down as the expected
+        // type for the assigned value
+        //
+        // otherwise type check the assigned value using the expected
+        // type
+        Expression rhs = getOperand(1);
+        if ((expected.isUndefined() || expected.isVoid()) && lhs instanceof Variable) {
+            Type type1 = lhs.typeCheckAssign(Type.UNDEFINED);
+            Type type2 = rhs.typeCheck(type1);
+            type = type1;
+        } else {
+            Type type2 = rhs.typeCheck(expected);
+            Type type1 = lhs.typeCheckAssign(type2);
+            type = type1;
+        }
         return type;
     }
 
@@ -86,13 +100,30 @@ public class AssignExpression extends BinaryOperExpression
         // accordingly and we don't add anything more so there is no need to check the stack heights here
 
         oper1.compile(mv, compileContext);
-        compileTypeConversion(oper1.getType(), type, mv, compileContext);
+
+        // one or other of the lhs and rhs may be inaccessible
+        // and hence treated simply as an Object. if not then
+        // we may need to perform a type conversion.
+        // if the rhs is inaccessible it can be treated as an Object
+        // if the rhs is inaccessible then it can also be treated as an object
+        Type rhsType = oper1.getType();
+        Type lhsType = type;
+        if (!rule.requiresAccess(lhsType)) {
+            // we are assigning into a non-generic slot
+            // if the rhs has been treated generically
+            // then it needs casting from OBJECT
+            // otherwise convert using its type
+            if(rule.requiresAccess(rhsType)) {
+                rhsType = Type.OBJECT;
+            }
+            compileContext.compileTypeConversion(rhsType, lhsType);
+        }
 
         // now get the LHS expression to compile in the appropriate assignment code
 
         lhs.compileAssign(mv, compileContext);
 
-        // ok, the stack height should be increased by the expecdted bytecount
+        // ok, the stack height should be increased by the expected bytecount
         if (compileContext.getStackCount() != currentStack + expected) {
             throw new CompileException("AssignExpression.compileAssignment : invalid stack height " + compileContext.getStackCount() + " expecting " + (currentStack + expected));
         }

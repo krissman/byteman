@@ -170,13 +170,13 @@ public class TryCatchDetails
                     pos++;
                 } else {
                     // need to insert before this one unless it is already present
-                    if (compare > 0) {
+                    if (compare == 0) {
                         pos = -1;
                     }
                     break;
                 }
             }
-            
+
             if (pos >= 0) {
                 openMonitorEnters.add(pos, location);
             }
@@ -205,5 +205,17 @@ public class TryCatchDetails
     public List<TryCatchDetails> getShadowRegions()
     {
         return shadowRegions;
+    }
+
+    public boolean hasShadowRegion(TryCatchDetails tryCatchDetails)
+    {
+        return (shadowRegions != null && shadowRegions.contains(tryCatchDetails));
+    }
+
+    public String toString()
+    {
+        StringBuilder builder = new StringBuilder();
+        builder.append("" + type + " try: " + cfg.getLocation(start) + " catch: " + cfg.getLocation(end) + " handler: " + cfg.getLocation(handler));
+        return builder.toString();
     }
 }

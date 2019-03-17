@@ -23,6 +23,7 @@
 */
 package org.jboss.byteman.agent.adapter.cfg;
 
+import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.Opcodes;
 import org.jboss.byteman.agent.adapter.OpcodesHelper;
@@ -442,13 +443,29 @@ public class BBlock
         return buf.toString();
     }
 
+    public void printLabelOffset(StringBuffer buf, Label l, boolean appendBlockPos, Object altText)
+    {
+        CodeLocation loc = cfg.getLocation(l);
+        if (loc != null) {
+            buf.append(l.getOffset());
+            if (appendBlockPos) {
+                buf.append(" BB");
+                buf.append(loc.getBlockIdx());
+                buf.append('.');
+                buf.append(loc.getInstructionIdx());
+            }
+        } else if (altText != null) {
+            buf.append(altText);
+        }
+    }
     /**
-     * write a string represenattion of this block to the buffer
+     * write a string representation of this block to the buffer
      * @param buf the buffer to be written to
      */
     void printTo(StringBuffer buf)
     {
         int blockIdx = this.getBlockIdx();
+        int bcpos = 0;
         buf.append(this.getLabel().getOffset());
         buf.append(": BB ");
         buf.append(blockIdx);
@@ -462,6 +479,7 @@ public class BBlock
             if (containsIter.hasNext()) {
                 containedLabel = containsIter.next();
                 containedPosition = cfg.getBlockInstructionIdx(containedLabel);
+                bcpos =  containedLabel.getOffset();
             } else {
                 containedLabel = null;
                 containedPosition = -1;
@@ -477,26 +495,21 @@ public class BBlock
             // we will never enter this if containedPosition is -1 which safeguards us when containsIter
             // is null or containedLabel is null
             while (containedPosition == i) {
-                buf.append(containedLabel.getOffset());
+                bcpos = containedLabel.getOffset();
+                buf.append(bcpos);
                 buf.append(": ");
                 buf.append(containedLabel);
-                buf.append(" +");
-                buf.append(containedPosition);
                 if (cfg.tryCatchStart(containedLabel)) {
                     List<TryCatchDetails> detailsList = cfg.tryCatchStartDetails(containedLabel);
                     int detailsCount = detailsList.size();
                     for (int j = 0; j < detailsCount; j++) {
                         TryCatchDetails details = detailsList.get(j);
                         Label handlerLabel = details.getHandler();
-                        CodeLocation handlerLocation = cfg.getLocation(handlerLabel);
+                        buf.append("\n  ");
                         buf.append(" try ");
                         buf.append(details.getType());
-                        buf.append(" ");
-                        if (handlerLocation != null) {
-                            buf.append(handlerLabel.getOffset());
-                        } else {
-                            buf.append("??");
-                        }
+                        buf.append(" -> ");
+                        printLabelOffset(buf, handlerLabel, false, "??");
                         buf.append(" ");
                         buf.append(handlerLabel);
                     }
@@ -507,15 +520,11 @@ public class BBlock
                     for (int j = 0; j < detailsCount; j++) {
                         TryCatchDetails details = detailsList.get(j);
                         Label handlerLabel = details.getHandler();
-                        CodeLocation handlerLocation = cfg.getLocation(handlerLabel);
+                        buf.append("\n  ");
                         buf.append(" catch ");
                         buf.append(details.getType());
-                        buf.append(" ");
-                        if (handlerLocation != null) {
-                            buf.append(handlerLabel.getOffset());
-                        } else {
-                            buf.append("??");
-                        }
+                        buf.append(" -> ");
+                        printLabelOffset(buf, handlerLabel, false, "??");
                         buf.append(" ");
                         buf.append(handlerLabel);
                     }
@@ -525,47 +534,54 @@ public class BBlock
                     int detailsCount = detailsList.size();
                     for (int j = 0; j < detailsCount; j++) {
                         TryCatchDetails details = detailsList.get(j);
+                        buf.append("\n  ");
                         buf.append(" handle ");
                         buf.append(details.getType());
-                        buf.append(" ");
-                        buf.append(details.getStart().getOffset());
-                        buf.append(" ");
-                        buf.append(details.getEnd().getOffset());
+                        buf.append(" <- ");
+                        Label start = details.getStart();
+                        Label end = details.getEnd();
+                        printLabelOffset(buf, start, false, start);
+                        buf.append(":");
+                        printLabelOffset(buf, end, false, end);
                     }
                 }
                 if (cfg.triggerStart(containedLabel)) {
+                    buf.append("\n  ");
                     buf.append(" trigger start");
-                    TriggerDetails details = cfg.triggerStartDetails(containedLabel);
                 }
                 if (cfg.triggerEnd(containedLabel)) {
+                    buf.append("\n  ");
                     buf.append(" trigger end");
                 }
-                buf.append("\n");
                 List<CodeLocation> openEnters = cfg.getOpenMonitorEnters(containedLabel);
                 if (openEnters != null) {
                     int openCount = openEnters.size();
                     if (openCount > 0) {
+                        buf.append("\n  ");
                         buf.append("open monitors: ");
                         for (int j = 0; j < openCount; j++) {
                             CodeLocation l = openEnters.get(j);
                             buf.append(" BB");
-                            buf.append(l.getBlock().getBlockIdx());
+                            buf.append(l.getBlockIdx());
                             buf.append(".");
                             buf.append(l.getInstructionIdx());
                         }
-                        buf.append('\n');
                     }
                 }
+                buf.append("\n");
                 containedLabel = (containsIter.hasNext() ? containsIter.next() : null);
                 containedPosition = (containedLabel != null ? cfg.getBlockInstructionIdx(containedLabel) : -1);
             }
             // buf.append("   ");
+                buf.append(bcpos);
+            buf.append(":\t");
             buf.append(blockIdx);
             buf.append(".");
             buf.append(i);
             buf.append(": ");
             int opcode = this.getInstruction(i);
-            switch (OpcodesHelper.insnType(opcode)) {
+            int insnType = OpcodesHelper.insnType(opcode);
+            switch (insnType) {
                 case OpcodesHelper.INSN_NONE:
                 {
                     // print the instruction name
@@ -626,269 +642,70 @@ public class BBlock
                 {
                     // note that we may not have generated the code for the jump target yet
                     Label targetLabel = this.firstOut();
-                    CodeLocation targetLocation = cfg.getLocation(targetLabel);
-                    int targetPos = (targetLocation != null ? targetLabel.getOffset() : -1);
                     switch (opcode) {
                         case Opcodes.IFEQ:
                             buf.append("IFEQ ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.IFNE:
                             buf.append("IFNE ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.IFLT:
                             buf.append("IFLT ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.IFGE:
                             buf.append("IFGE ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.IFGT:
                             buf.append("IFGT ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.IFLE:
                             buf.append("IFLE ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.IF_ICMPEQ:
                             buf.append("IF_ICMPEQ ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.IF_ICMPNE:
                             buf.append("IF_ICMPNE ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.IF_ICMPLT:
                             buf.append("IF_ICMPLT ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.IF_ICMPGE:
                             buf.append("IF_ICMPGE ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.IF_ICMPGT:
                             buf.append("IF_ICMPGT ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.IF_ICMPLE:
                             buf.append("IF_ICMPLE ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.IF_ACMPEQ:
-                            buf.append("IF_ACMPEQ ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.IF_ACMPNE:
                             buf.append("IF_ACMPNE ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.GOTO:
                             buf.append("GOTO ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.JSR:
                             buf.append("JSR ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.IFNULL:
                             buf.append("IFNULL ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                         case Opcodes.IFNONNULL:
                             buf.append("IFNONNULL ");
-                            if (targetPos >= 0) {
-                                buf.append(targetPos);
-                                buf.append(" BB ");
-                                buf.append(targetLocation.getBlock().getBlockIdx());
-                                buf.append(" ");
-                                buf.append(targetLabel);
-                            } else {
-                                buf.append("??  ");
-                                buf.append(targetLabel);
-                            }
-                            buf.append("\n");
                             break;
                     }
+                    printLabelOffset(buf, targetLabel, true, "??");
+                    buf.append(" ");
+                    buf.append(targetLabel);
+                    buf.append("\n");
                 }
                 break;
                 case OpcodesHelper.INSN_TSWITCH:
                 {
                     Label targetLabel;
-                    CodeLocation targetLocation;
-                    int targetPos;
                     // print the instruction followed by the jump table discriminant min and max and then
                     // the jump labels
                     int min = this.getInstructionArg(i, 0);
@@ -903,36 +720,16 @@ public class BBlock
                     for (int j = 1; j <= count; j++) {
                         // note that we may not have generated the code for the jump target yet
                         targetLabel = this.nthOut(j);
-                        targetLocation = cfg.getLocation(targetLabel);
-                        targetPos = (targetLocation != null ? targetLabel.getOffset() : -1);
                         buf.append("    ");
                         buf.append(min + j);
                         buf.append(" : ");
-                        if (targetPos >= 0) {
-                            buf.append(targetPos);
-                            buf.append(" BB ");
-                            buf.append(targetLocation.getBlock().getBlockIdx());
-                            buf.append(" ");
-                            buf.append(targetLabel);
-                        } else {
-                            buf.append("??  ");
-                            buf.append(targetLabel);
-                        }
+                        printLabelOffset(buf, targetLabel, true, "??");
+                        buf.append(" ");
                     }
                     targetLabel = this.firstOut();
-                    targetLocation = cfg.getLocation(targetLabel);
-                    targetPos = (targetLocation != null ? targetLabel.getOffset() : -1);
                     buf.append("    dflt : ");
-                    if (targetPos >= 0) {
-                        buf.append(targetPos);
-                        buf.append(" BB ");
-                        buf.append(targetLocation.getBlock().getBlockIdx());
-                        buf.append(" ");
-                        buf.append(targetLabel);
-                    } else {
-                        buf.append("??  ");
-                        buf.append(targetLabel);
-                    }
+                    printLabelOffset(buf, targetLabel, true, "??");
+                    buf.append(" ");
                 }
                 break;
                 case OpcodesHelper.INSN_LOOKUP:
@@ -947,36 +744,16 @@ public class BBlock
                     for (int j = 1; j <= count; j++) {
                         // note that we may not have generated the code for the jump target yet
                         targetLabel = this.nthOut(j);
-                        targetLocation = cfg.getLocation(targetLabel);
-                        targetPos = (targetLocation != null ? targetLabel.getOffset() : -1);
                         buf.append("    ");
                         buf.append(this.getInstructionArg(i, j));
                         buf.append(" : ");
-                        if (targetPos >= 0) {
-                            buf.append(targetPos);
-                            buf.append(" BB ");
-                            buf.append(targetLocation.getBlock().getBlockIdx());
-                            buf.append(" ");
-                            buf.append(targetLabel);
-                        } else {
-                            buf.append("??  ");
-                            buf.append(targetLabel);
-                        }
+                        printLabelOffset(buf, targetLabel, true, "??");
+                        buf.append(" ");
                     }
                     targetLabel = this.firstOut();
-                    targetLocation = cfg.getLocation(targetLabel);
-                    targetPos = (targetLocation != null ? targetLabel.getOffset() : -1);
                     buf.append("    dflt : ");
-                    if (targetPos >= 0) {
-                        buf.append(targetPos);
-                        buf.append(" BB ");
-                        buf.append(targetLocation.getBlock().getBlockIdx());
-                        buf.append(" ");
-                        buf.append(targetLabel);
-                    } else {
-                        buf.append("??  ");
-                        buf.append(targetLabel);
-                    }
+                    printLabelOffset(buf, targetLabel, true, "??");
+                    buf.append(" ");
                 }
                 break;
                 case OpcodesHelper.INSN_FIELD:
@@ -1047,52 +824,115 @@ public class BBlock
                 }
                 break;
             }
+            bcpos = nextBCPos(opcode, i, bcpos);
         }
         // print the active starts for this block
         if (activeTryStarts != null) {
             Iterator<TryCatchDetails> activeStartsIter = activeTryStarts.iterator();
+            buf.append("active try starts:\n");
             while (activeStartsIter.hasNext()) {
                 TryCatchDetails details = activeStartsIter.next();
+                buf.append("  try: ");
+                buf.append(details.getType());
+                buf.append(" ");
                 Label label = details.getStart();
-                BBlock block = cfg.getBlock(label);
-                buf.append("try: ");
-                if (block != null) {
-                    buf.append(label.getOffset());
-                    buf.append(" ");
-                    buf.append(block.getBlockIdx());
-                    buf.append(".");
-                    buf.append(cfg.getBlockInstructionIdx(label));
-                } else {
-                    buf.append(label);
-                }
+                printLabelOffset(buf, label, true, label);
                 buf.append(" catch: ");
                 label = details.getEnd();
-                block = cfg.getBlock(label);
-                if (block != null) {
-                    buf.append(label.getOffset());
-                    buf.append(" ");
-                    buf.append(block.getBlockIdx());
-                    buf.append(".");
-                    buf.append(cfg.getBlockInstructionIdx(label));
-                } else {
-                    buf.append(label);
-                }
+                printLabelOffset(buf, label, true, label);
                 buf.append(" handle: ");
                 label = details.getHandler();
-                block = cfg.getBlock(label);
-                if (block != null) {
-                    buf.append(label.getOffset());
-                    buf.append(" ");
-                    buf.append(block.getBlockIdx());
-                    buf.append(".");
-                    buf.append(cfg.getBlockInstructionIdx(label));
-                } else {
-                    buf.append(label);
-                }
-                buf.append(" ");
-                buf.append(details.getType());
+                printLabelOffset(buf, label, true, label);
                 buf.append("\n");
             }
         }
+    }
+    private int nextBCPos(int opcode, int insnIdx, int currentPos)
+    {
+        int size = OpcodesHelper.insnsSize(opcode);
+        if (size < 0) {
+            // normal (non-wide) size is the negative of the returned value
+            size = -size;
+            // may be a wide opcode or a table/lookupswitch
+            switch (opcode) {
+                case Opcodes.LOOKUPSWITCH:
+                {
+                    // LOOKUPSWITCH has 0..3 padding bytes, off_def, N, key_1, off_1, ... key_N, off_N
+                    // add one byte for bytecode
+                    currentPos += 1;
+                    // round up to multiple of 4
+                    currentPos = ((currentPos + 3) / 4) * 4;
+                    // count fixed operand bytes
+                    currentPos += 8;
+                    // count variable operand bytes
+                    int count = this.getInstructionArg(insnIdx, 0);
+                    currentPos += count * 8;
+                }
+                break;
+                case Opcodes.TABLESWITCH:
+                {
+                    // TABLESWITCH has 0..3 padding bytes, off_def, lo, hi, off_1, ... off_N where N = ((hi + 1) - lo)
+                    // add one byte for bytecode
+                    currentPos += 1;
+                    // round up to multiple of 4
+                    currentPos = ((currentPos + 3) / 4) * 4;
+                    // count fixed operand bytes
+                    currentPos += 12;
+                    // count variable operand bytes
+                    int hi = this.getInstructionArg(insnIdx, 0);
+                    int lo = this.getInstructionArg(insnIdx, 1);
+                    int count = (hi + 1 - lo);
+                    currentPos += count * 4;
+                }
+                break;
+                default:
+                {
+                    // most wide operands just need an extra wide byte and an extra operand byte
+                    // but we have a few special cases
+                    if (opcode == Opcodes.IINC) {
+                        // wide iinc needs wide byte plus two extra operand bytes
+                        int slot = this.getInstructionArg(insnIdx, 0);
+                        int value = this.getInstructionArg(insnIdx, 1);
+                        if(slot > 255 || value > 127 || value < -128) {
+                            // wide format add one byte for preceding wide, one for operand and four operand bytes
+                            currentPos += 6;
+                        } else {
+                            // add one byte for operand and two operand bytes
+                            currentPos += 3;
+                        }
+                    } else if (opcode >= Opcodes.ILOAD && opcode <= Opcodes.ALOAD ||
+                            opcode >= Opcodes.ISTORE && opcode <= Opcodes.ASTORE) {
+                        // we can see xload when the real opcode is xload_<n>
+                        int slot = this.getInstructionArg(insnIdx, 0);
+                        if(slot < 4) {
+                            // add one byte for operand
+                            currentPos += 1;
+                        } else if(slot > 255) {
+                            // wide format add one byte for preceding wide, one for operand and two operand bytes
+                            currentPos += 4;
+                        } else {
+                            // add one byte for operand and one operand bytes
+                            currentPos += 2;
+                        }
+                    } else if (opcode == Opcodes.LDC) {
+                        int offset = this.getInstructionArg(insnIdx, 0);
+                        if (offset > 255) {
+                            // wide format add one byte for operand and two operand bytes
+                            currentPos += 3;
+                        } else {
+                            // add one byte for operand and one operand bytes
+                            currentPos += 2;
+                        }
+                    } else {
+                        // add one byte for preceding wide and one extra operand byte
+                        currentPos += (size + 2);
+                    }
+                }
+                break;
+            }
+        } else {
+            currentPos += size;
+        }
+        return currentPos;
     }
 }

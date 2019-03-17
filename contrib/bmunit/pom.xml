@@ -32,7 +32,7 @@
     <parent>
         <groupId>org.jboss.byteman</groupId>
         <artifactId>byteman-root</artifactId>
-        <version>3.0.1</version>
+        <version>4.0.6-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
     <build>
@@ -52,13 +52,15 @@
                     </includes>
                     <useSystemClassLoader>true</useSystemClassLoader>
                     <useManifestOnlyJar>true</useManifestOnlyJar>
-                    <forkMode>once</forkMode>
+                    <forkCount>1</forkCount>
+                    <reuseForks>false</reuseForks>
                     <systemProperties>
                         <property>
                             <name>org.jboss.byteman.home</name>
                             <value></value>
                         </property>
                     </systemProperties>
+                    <argLine>-Djdk.attach.allowAttachSelf</argLine>
                     <environmentVariables>
                         <BYTEMAN_HOME></BYTEMAN_HOME>
                     </environmentVariables>
@@ -89,10 +91,26 @@
                             <!-- test JUnit integration - this requires switching off the TestNG
                             processing mode enabled by the presence of TestNG tests in other
                             executions by overriding the testNGArtifactName -->
-                            <!-- BMUnitConfig default is not defined by UnitConfigTest-->
+                            <!-- BMUnitConfig default is not defined by UnitTest-->
                             <testNGArtifactName>none:none</testNGArtifactName>
                             <includes>
                                 <include>test/UnitTest.class</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>junitconfig</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <!-- test JUnit integration - this requires switching off the TestNG
+                            processing mode enabled by the presence of TestNG tests in other
+                            executions by overriding the testNGArtifactName -->
+                            <!-- BMUnitConfig default is defined by UnitConfigTest-->
+                            <testNGArtifactName>none:none</testNGArtifactName>
+                            <includes>
                                 <include>test/UnitConfigTest.class</include>
                             </includes>
                         </configuration>

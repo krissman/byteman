@@ -24,6 +24,8 @@
  */
 package org.jboss.byteman.agent;
 
+import org.jboss.byteman.rule.helper.Helper;
+
 import java.util.*;
 import java.lang.reflect.Method;
 
@@ -62,6 +64,12 @@ public class ScriptRepository
             String targetMethod = null;
             String targetHelper = null;
             String defaultHelper = null;
+            String[] targetImports  = null;
+            String[] defaultImports = new String[0];
+            // script level compilation defaults to Transformer setting but may be overridden
+            boolean scriptCompileToBytecode = Transformer.isCompileToBytecode();
+            // rule level compilation defaults to script level but may be overridden
+            boolean ruleCompileToBytecode = scriptCompileToBytecode;
             LocationType locationType = null;
             Location targetLocation = null;
             boolean isInterface = false;
@@ -91,9 +99,52 @@ public class ScriptRepository
                         targetHelper = line.substring(7).trim();
                     } else {
                         defaultHelper = line.substring(7).trim();
-                        // empty classanme resets to the default
+                        // empty classname resets to the default
                         if (defaultHelper.length() == 0) {
                             defaultHelper = null;
+                        }
+                    }
+                } else if (line.equals("COMPILE")) {
+                    if (inRule) {
+                        ruleCompileToBytecode = true;
+                    } else {
+                        scriptCompileToBytecode = true;
+                        ruleCompileToBytecode = true;
+                    }
+                } else if (line.equals("NOCOMPILE")) {
+                    if (inRule) {
+                        ruleCompileToBytecode = false;
+                    } else {
+                        scriptCompileToBytecode = false;
+                        ruleCompileToBytecode = false;
+                    }
+                } else if (line.startsWith("IMPORT ") || line.equals("IMPORT")) {
+                    String imp = line.substring(6).trim();
+                    if (inRule) {
+                        if (imp.isEmpty()) {
+                            // remove any globally defined imports
+                            targetImports = new String[0];
+                        } else {
+                            // add to the existing rule imports if any, otherwise the global ones
+                            if (targetImports == null) {
+                                if (defaultImports == null)
+                                    targetImports = new String[1];
+                                else
+                                    targetImports = Arrays.copyOf(defaultImports, defaultImports.length + 1);
+                            } else {
+                                targetImports = Arrays.copyOf(targetImports, targetImports.length + 1);
+                            }
+                            targetImports[targetImports.length - 1] = imp;
+                        }
+                    } else {
+                        if (imp.isEmpty())
+                            defaultImports = null;
+                        else {
+                            if (defaultImports == null)
+                                defaultImports = new String[1];
+                            else
+                                defaultImports = Arrays.copyOf(defaultImports, defaultImports.length + 1);
+                            defaultImports[defaultImports.length - 1] = imp;
                         }
                     }
                 } else if (!inRule) {
@@ -106,12 +157,18 @@ public class ScriptRepository
                         isOverride = true;
                         targetClass = targetClass.substring(1).trim();
                     }
+                    if (Transformer.isBytemanClass(targetClass)) {
+                        throw new Exception("org.jboss.byteman.agent.Transformer : invalid target class " + targetClass + " at line " + lineNumber + " in script " + scriptFile);
+                    }
                 } else if (line.startsWith("INTERFACE ")) {
                     targetClass = line.substring(10).trim();
                     isInterface = true;
                     if (targetClass.startsWith("^")) {
                         isOverride = true;
                         targetClass = targetClass.substring(1).trim();
+                    }
+                    if (Transformer.isBytemanClass(targetClass)) {
+                        throw new Exception("org.jboss.byteman.agent.Transformer : invalid target class " + targetClass + " at line " + lineNumber + " in script " + scriptFile);
                     }
                 } else if (line.startsWith("METHOD ")) {
                     targetMethod = line.substring(7).trim();
@@ -135,7 +192,10 @@ public class ScriptRepository
                         if (targetHelper == null) {
                             targetHelper = defaultHelper;
                         }
-                        RuleScript ruleScript = new RuleScript(name, targetClass, isInterface, isOverride, targetMethod, targetHelper, targetLocation, nextRule, startNumber, scriptFile);
+                        if (targetImports == null) {
+                            targetImports = (defaultImports != null) ? defaultImports : new String[0];
+                        }
+                        RuleScript ruleScript = new RuleScript(name, targetClass, isInterface, isOverride, targetMethod, targetHelper, targetImports, targetLocation, nextRule, startNumber, scriptFile, ruleCompileToBytecode);
                         ruleScripts.add(ruleScript);
                     }
                     name = null;
@@ -143,6 +203,9 @@ public class ScriptRepository
                     targetMethod = null;
                     targetLocation = null;
                     targetHelper = null;
+                    targetImports = null;
+                    // reset rule level compilation to script level setting
+                    ruleCompileToBytecode = scriptCompileToBytecode;
                     nextRule = "";
                     sepr = "";
                     inRule = false;
@@ -179,7 +242,7 @@ public class ScriptRepository
         // sanity check override rule setting and print warning if necessary
 
         if (skipOverrideRules && script.isOverride()) {
-            System.err.println("ScriptRepository.addScript : injection into overriding methods disabled but found override rule " + script.getName());
+            Helper.err("ScriptRepository.addScript : injection into overriding methods disabled but found override rules " + script.getName());
         }
 
         // insert the script by name, invalidating any old script

@@ -94,7 +94,7 @@ public class ShiftExpression extends BinaryOperExpression
                         result = 0;
                         break;
                 }
-                return new Byte(result);
+                return Byte.valueOf(result);
             } else if (type == type.S) {
                 short s1 = value1.shortValue();
                 short result;
@@ -113,7 +113,7 @@ public class ShiftExpression extends BinaryOperExpression
                         result = 0;
                         break;
                 }
-                return new Short(result);
+                return Short.valueOf(result);
             }  else if (type == type.I) {
                 int i1 = value1.intValue();
                 int result;
@@ -132,7 +132,7 @@ public class ShiftExpression extends BinaryOperExpression
                         result = 0;
                         break;
                 }
-                return new Integer(result);
+                return Integer.valueOf(result);
             }  else { // if (type == type.J) {
                 long l1 = value1.longValue();
                 long result;
@@ -151,7 +151,7 @@ public class ShiftExpression extends BinaryOperExpression
                         result = 0;
                         break;
                 }
-                return new Long(result);
+                return Long.valueOf(result);
             }
         } catch (ExecuteException e) {
             throw e;
@@ -171,9 +171,9 @@ public class ShiftExpression extends BinaryOperExpression
         Expression oper1 = getOperand(1);
         // compile the operands and make sure the first result is our target type and the second is int
         oper0.compile(mv, compileContext);
-        compileTypeConversion(oper0.getType(), type, mv, compileContext);
+        compileContext.compileTypeConversion(oper0.getType(), type);
         oper1.compile(mv, compileContext);
-        compileTypeConversion(oper1.getType(), Type.I, mv, compileContext);
+        compileContext.compileTypeConversion(oper1.getType(), Type.I);
 
         if (type == Type.B || type == Type.S || type == Type.I) {
             switch (oper)

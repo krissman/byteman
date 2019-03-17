@@ -273,10 +273,10 @@ public class NewExpression extends Expression
         for (int i = 0; i < candidates.size();) {
             Constructor c = candidates.get(i);
             Class nextClazz = c.getParameterTypes()[argIdx];
-            if (nextClazz != argClazz) {
-                candidates.remove(i);
-            } else {
+            if (nextClazz == argClazz || nextClazz.isAssignableFrom(argClazz)) {
                 i++;
+            } else {
+                candidates.remove(i);
             }
         }
         return candidates;
@@ -367,7 +367,7 @@ public class NewExpression extends Expression
                 // track extra storage used after type conversion
                 extraParams += (paramCount);
                 arguments.get(i).compile(mv, compileContext);
-                compileTypeConversion(argType, paramType, mv, compileContext);
+                compileContext.compileTypeConversion(argType, paramType);
             }
 
             // construct the exception

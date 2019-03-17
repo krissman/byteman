@@ -26,14 +26,15 @@
 @rem a JVM which was started without the agent. This provides an
 @rem alternative to using the -javaagent java command line flag
 @rem
-@rem usage: bminstall [-p port] [-h host] [-b] [-s] [-Dname[=value]]* pid
+@rem usage: bminstall [-p port] [-h host] [-b] [-s] [-m] [-Dname[=value]]* pid
 @rem   pid is the process id of the target JVM
 @rem   -h host selects the host name or address the agent listener binds to
 @rem   -p port selects the port the agent listener binds to
 @rem   -b adds the byteman jar to the bootstrap classpath
 @rem   -s sets an access-all-areas security policy for the Byteman agent code
+@rem   -m activates the byteman JBoss modules plugin
 @rem   -Dname=value can be used to set system properties whose name starts with "org.jboss.byteman."
-@rem   expects to find a byteman agent jar in BYTEMAN_HOME
+@rem   expects to find a byteman agent jar and byteman JBoss modules plugin jar (if -m is indicated) in BYTEMAN_HOME
 @rem
 @rem -----------------------------------------------------------------------------------
 if "%OS%" == "Windows_NT" setlocal
@@ -63,7 +64,7 @@ goto noTools
 :okJavaHome
 
 if exist "%JAVA_HOME%\lib\tools.jar" goto okTools
-echo Cannot locate tools jar
+@rem Cannot locate tools jar -- ignore as this may happen with jdk9+
 @rem carry on anyway as this is legitimate for jdk9
 goto noTools
 
@@ -84,12 +85,13 @@ if "%OS%" == "Windows_NT" endlocal
 exit /b
 
 :showUsage
-echo usage: bminstall [-p port] [-h host] [-b] [-s] [-Dname[=value]]* pid
+echo usage: bminstall [-p port] [-h host] [-b] [-s] [-m] [-Dname[=value]]* pid
 echo   pid is the process id of the target JVM
 echo   -h host selects the host name or address the agent listener binds to
 echo   -p port selects the port the agent listener binds to
 echo   -b adds the byteman jar to the bootstrap classpath
 echo   -s sets an access-all-areas security policy for the Byteman agent code
+echo   -m activates the byteman JBoss modules plugin
 echo   -Dname=value can be used to set system properties whose name starts with "org.jboss.byteman."
-echo   expects to find a byteman agent jar in BYTEMAN_HOME
+echo   expects to find a byteman agent jar and byteman JBoss modules plugin jar (if -m is indicated) in BYTEMAN_HOME
 goto exitBatch

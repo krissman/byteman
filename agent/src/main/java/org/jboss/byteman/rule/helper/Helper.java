@@ -23,14 +23,30 @@
  */
 package org.jboss.byteman.rule.helper;
 
+import org.jboss.byteman.agent.Transformer;
 import org.jboss.byteman.rule.Rule;
 import org.jboss.byteman.rule.exception.ExecuteException;
-import org.jboss.byteman.synchronization.*;
+import org.jboss.byteman.synchronization.CountDown;
+import org.jboss.byteman.synchronization.Counter;
+import org.jboss.byteman.synchronization.Joiner;
+import org.jboss.byteman.synchronization.Rendezvous;
 import org.jboss.byteman.synchronization.Timer;
-import org.jboss.byteman.agent.Transformer;
+import org.jboss.byteman.synchronization.Waiter;
 
-import java.io.*;
-import java.util.*;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.PrintStream;
+import java.io.StringWriter;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * This is the default helper class which is used to define builtin operations for rules.
@@ -49,194 +65,106 @@ public class Helper
     {
         this.rule = rule;
     }
-    // tracing support
+    // rule debug tracing support
     /**
      * builtin to print a message during rule execution. n.b. this always returns true which
-     * means it can be invoked during condition execution
+     * means it can be invoked during condition execution.
+     * punts to a static call to Helper.dotraceln("dbg", debugPrefix + text) to
+     * do the actual printing to the "dbg" trace stream where debugPrefix is a prefix
+     * including the keyword debug and a key based on the rule name which is specific
+     * to the injection point for the rule.
      * @param text the message to be printed as trace output
      * @return true
      */
     public boolean debug(String text)
     {
         if (Transformer.isDebug()) {
-            System.out.println("rule.debug{" + rule.getName() + "} : " + text);
+            dotraceln("dbg", "rule.debug{" + rule.getKey() + "} : " + text);
         }
         return true;
     }
 
-    // file based trace support
+    // file + System.out/err based trace support
     /**
-     * open a trace output stream identified by identifier to a file located in the current working
-     * directory using a unique generated name
+     * builtin to open a trace output stream identified by identifier to a file located in the
+     * current working directory using a unique generated name. equivalent to calling
+     * traceOpen(identifier, null).
      * @param identifier an identifier used subsequently to identify the trace output stream
      * @return true if new file and stream was created, false if a stream identified by identifier
-     * already existed or the identifer is null, "out" or "err"
+     * already existed or the identifier is null, "out" or "err"
      */
     public boolean traceOpen(Object identifier)
     {
         return traceOpen(identifier, null);
     }
 
+
     /**
-     * open a trace output stream identified by identifier to a file located in the current working
-     * directory using the given file name or a generated name if the supplied name is null
+     * builtin to open a trace output stream which is redirected to a file in the current directory
+     * if specified. Punts to static call Helper.doTraceOpen(identifier, fileName)
      * @param identifier an identifier used subsequently to identify the trace output stream
      * @param fileName the name of the trace file or null if a name should be generated
-     * @return true if new file and stream was created, false if a stream identified by identifier
-     * already existed or if a file of the same name already exists or the identifer is null, "out"
-     * or "err"
+     * @return true if the output stream was successfully created. false if a stream identified by
+     * identifier already existed or if a file of the same name already exists or the identifier is
+     * null, "out" or "err"
      */
     public boolean traceOpen(Object identifier, String fileName)
     {
-        if (identifier == null) {
-            return false;
-        }
-
-        synchronized(traceMap) {
-            PrintStream stream = traceMap.get(identifier);
-            String name = fileName;
-            if (stream != null) {
-                return false;
-            }
-            if (fileName == null) {
-                name = nextFileName();
-            }
-            File file = new File(name);
-
-            if (file.exists() && !file.canWrite()) {
-                if (fileName == null) {
-                    // keep trying new names until we hit an unused one
-                    do {
-                        name = nextFileName();
-                        file = new File(name);
-                    } while (file.exists() && !file.canWrite());
-                } else {
-                    // can't open file as requested
-                    return false;
-                }
-            }
-                
-            FileOutputStream fos;
-
-            try {
-                if (file.exists()) {
-                    fos = new FileOutputStream(file, true);
-                } else {
-                    fos = new FileOutputStream(file, true);
-                }
-            } catch (FileNotFoundException e) {
-                // oops, just return false
-                return false;
-            }
-
-            PrintStream ps = new PrintStream(fos, true);
-
-            traceMap.put(identifier, ps);
-
-            return true;
-        }
+    	return doTraceOpen(identifier, fileName);
     }
 
     /**
-     * close the trace output stream identified by identifier flushing any pending output
+     * builtin to close the trace output stream identified by identifier flushing any pending
+     * output. Punts to static call Helper.doTraceClose(identifier)
      * @param identifier an identifier used subsequently to identify the trace output stream
-     * @return true if the stream was flushed and closed, false if no stream is identified by identifier
-     * or the identifer is null, "out" or "err"
+     * @return true if the stream was flushed and closed, false if no stream is identified by
+     * identifier or identifer is null, "out" or "err"
      */
     public boolean traceClose(Object identifier)
     {
-        if (identifier == null ||
-                identifier.equals("out") ||
-                identifier.equals("err")) {
-            return false;
-        }
-
-        synchronized(traceMap) {
-            PrintStream ps = traceMap.get(identifier);
-            if (ps != null) {
-                // need to do the close while synchornized so we ensure an open cannot
-                // proceed until we have flushed all changes to disk
-                ps.close();
-                traceMap.remove(identifier);
-                return true;
-            }
-        }
-
-        return false;
+        return doTraceClose(identifier);
     }
 
     /**
-     * call trace("out, message").
-     * @param message the message to be printed
+     * equivalent to calling trace("out", message).
+     * @param message the message to be printed in the output stream
      * @return true
      */
     public boolean trace(String message)
     {
-        return trace("out", message);
+        return dotrace("out", message);
     }
-
+    
     /**
-     * write the supplied message to the trace stream identified by identifier, creating a new stream
-     * if none exists
+     * punts to static call Helper.dotrace(identifier, message).
      * @param identifier an identifier used subsequently to identify the trace output stream
-     * @param message the message to be traced
+     * @param message the message to be printed
      * @return true
-     *
-     * caveat: if identifier is the string "out" or null the message will be written to System.out.
-     * if identifier is the string "err" the message will be written to System.err.
      */
     public boolean trace(Object identifier, String message)
     {
-        synchronized(traceMap) {
-            PrintStream ps = traceMap.get(identifier);
-            if (ps == null) {
-                if (openTrace(identifier)) {
-                    ps = traceMap.get(identifier);
-                } else {
-                    ps = System.out;
-                }
-            }
-            ps.print(message);
-            ps.flush();
-        }
-        return true;
+        return dotrace(identifier, message);
     }
 
     /**
-     * call traceln("out", message).
+     * equivalent to calling traceln("out", message).
      * @param message the message to be traced
      * @return true
      */
     public boolean traceln(String message)
     {
-        return traceln("out", message);
+        return dotraceln("out", message);
     }
-    
+
     /**
-     * write the supplied message to the trace stream identified by identifier, creating a new stream
-     * if none exists, and append a new line
+     * punts to static call dotraceln(identifier, message).
      * @param identifier an identifier used subsequently to identify the trace output stream
      * @param message the message to be traced
      * @return true
-     *
-     * caveat: if identifier is the string "out" or null the message will be written to System.out.
-     * if identifier is the string "err" the message will be written to System.err.
      */
     public boolean traceln(Object identifier, String message)
     {
-        synchronized(traceMap) {
-            PrintStream ps = traceMap.get(identifier);
-            if (ps == null) {
-                if (openTrace(identifier)) {
-                    ps = traceMap.get(identifier);
-                } else {
-                    ps = System.out;
-                }
-            }
-            ps.println(message);
-            ps.flush();
-        }
-        return true;
+        return dotraceln(identifier, message);
     }
 
     /**
@@ -266,6 +194,291 @@ public class Helper
     public boolean closeTrace(Object identifier)
     {
         return traceClose(identifier);
+    }
+
+    // public static methods (i.e. non-builtins) allowing Byteman agent to access trace capability
+
+    /**
+     * punts to static call dotraceln("out", msg) to print msg to the "out"
+     * trace stream
+     * @param msg the message to be traced
+     * @return true
+     */
+    public static boolean out(String msg)
+    {
+        dotraceln("out", msg);
+        return true;
+    }
+
+    /**
+     * punts to static call dotraceln("err", msg) to print msg to the "err"
+     * trace stream
+     * @param msg the message to be traced
+     * @return true
+     */
+    public static boolean err(String msg)
+    {
+        dotraceln("err", msg);
+        return true;
+    }
+
+    /**
+     * punts to static call dotraceln("vrb", msg) to print msg to the "vrb"
+     * trace stream when the verbose log level is enabled
+     * @param msg the message to be traced
+     * @return true
+     */
+    public static boolean verbose(String msg)
+    {
+        if (Transformer.isVerbose()) {
+            dotraceln("vrb", msg);
+        }
+        return true;
+    }
+
+
+    /**
+     * punts to static call dotraceln("nzy", msg) to print msg to the "nzy"
+     * trace stream when the noisy log level is enabled
+     *
+     * @param msg the message to be traced
+     * @return true
+     */
+    public static boolean noisy(String msg)
+    {
+        // cannot implement this properly until noisy logging can be configured
+        if (false) {
+            dotraceln("nzy", msg);
+        }
+        return true;
+    }
+
+    /**
+     * Print the stack trace for th to the "out" trace stream
+     * @param th the throwable stack trace
+     */
+    public static void outTraceException(Throwable th)
+    {
+        doTraceException("out", th);
+    }
+
+    /**
+     * Print the stack trace for th to the "err" trace stream
+     * @param th the throwable stack trace
+     */
+    public static void errTraceException(Throwable th)
+    {
+        doTraceException("err", th);
+    }
+
+    /**
+     * Print the stack trace for th to System.out when the verbose log level is enabled
+     * @param th the throwable stack trace
+     */
+    public static void verboseTraceException(Throwable th)
+    {
+        if (Transformer.isVerbose()) {
+            doTraceException("vrb", th);
+        }
+    }
+    
+    /**
+     * Print the stack trace to System.out when the noisy log level is enabled
+     * @param th the throwable stack trace 
+     */
+    public static void noisyTraceException(Throwable th)
+    {
+        // cannot implement this properly until noisy logging can be configured
+        if(false) {
+            doTraceException("nzy", th);
+        }
+    }
+
+    // private static implementation of trace functionality
+
+    /**
+     * open a trace output stream identified by identifier to a file located in the current working
+     * directory using the given file name or a generated name if the supplied name is null
+     * @param identifier an identifier used subsequently to identify the trace output stream
+     * @param fileName the name of the trace file or null if a name should be generated
+     * @return true if new file and stream was created, false if a stream identified by identifier
+     * already existed or if a file of the same name already exists or the identifier is null, "out"
+     * or "err"
+     */
+    private static boolean doTraceOpen(Object identifier, String fileName) {
+        // a key must be provided
+    	if (identifier == null) {
+            return false;
+        }
+        // out and err cannot be redirected
+        if (identifier.equals("out") || identifier.equals("err")) {
+    	    return false;
+        }
+
+        synchronized(traceMap) {
+            PrintStream stream = traceMap.get(identifier);
+            if (stream != null) {
+                return false;
+            }
+            // dbg, vrb and nzy can be redirected
+            // but if not they default to System.out
+            if (stream == null) {
+                if (identifier.equals("dbg") ||
+                        identifier.equals("vrb") ||
+                        identifier.equals(("nzy"))) {
+                    return false;
+                }
+            }
+            String name = fileName;
+            if (fileName == null) {
+                name = nextFileName();
+            }
+            File file = new File(name);
+
+            if (file.exists() && !file.canWrite()) {
+                if (fileName == null) {
+                    // keep trying new names until we hit an unused one
+                    do {
+                        name = nextFileName();
+                        file = new File(name);
+                    } while (file.exists() && !file.canWrite());
+                } else {
+                    // can't open file as requested
+                    return false;
+                }
+            }
+
+            FileOutputStream fos;
+
+            try {
+                if (file.exists()) {
+                    fos = new FileOutputStream(file, true);
+                } else {
+                    fos = new FileOutputStream(file, true);
+                }
+            } catch (FileNotFoundException e) {
+                // oops, just return false
+                return false;
+            }
+
+            PrintStream ps = new PrintStream(fos, true);
+
+            traceMap.put(identifier, ps);
+
+            return true;
+        }
+    }
+
+    /**
+     * close the trace output stream identified by identifier flushing any pending output.
+     * @param identifier an identifier used subsequently to identify the trace output stream
+     * @return true if the stream was flushed and closed, false if no stream is identified by
+     * identifier or identifier is null, "out" or "err"
+     */
+    private static boolean doTraceClose(Object identifier)
+    {
+        // we never need to deal with these cases
+        if (identifier == null ||
+                identifier.equals("out") ||
+                identifier.equals("err")) {
+            return false;
+        }
+
+        synchronized(traceMap) {
+            // need to do the close while synchronized so we ensure an open cannot
+            // proceed until we have flushed all changes to disk
+            PrintStream ps = traceMap.get(identifier);
+            if (ps != null) {
+                ps.close();
+                traceMap.remove(identifier);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * write the supplied message to the trace stream identified by identifier, creating a new stream
+     * if none exists
+     * @param identifier an identifier used subsequently to identify the trace output stream
+     * @param message the message to be traced
+     * @return true
+     *
+     * caveat: if identifier is the string "out" or null the message will be written to System.out.
+     * if identifier is the string "err" the message will be written to System.err.
+     */
+    private static boolean dotrace(Object identifier, String message)
+    {
+        synchronized(traceMap) {
+            PrintStream ps = traceMap.get(identifier);
+            if (ps == null) {
+                if (doTraceOpen(identifier, null)) {
+                    ps = traceMap.get(identifier);
+                } else {
+                    if (identifier.equals("err")) {
+                        ps = System.err;
+                    } else {
+                        ps = System.out;
+                    }
+                }
+            }
+            ps.print(message);
+            ps.flush();
+        }
+        return true;
+    }
+
+    /**
+     * write the supplied message to the trace stream identified by identifier, creating a new stream
+     * if none exists, and append a new line
+     * @param identifier an identifier used subsequently to identify the trace output stream
+     * @param message the message to be traced
+     * @return true
+     *
+     * caveat: if identifier is the string "out" or null the message will be written to System.out.
+     * if identifier is the string "err" the message will be written to System.err.
+     */
+    private static boolean dotraceln(Object identifier, String message)
+    {
+        synchronized(traceMap) {
+            PrintStream ps = traceMap.get(identifier);
+            if (ps == null) {
+                if (doTraceOpen(identifier, null)) {
+                    ps = traceMap.get(identifier);
+                } else {
+                    if (identifier.equals("err")) {
+                        ps = System.err;
+                    } else {
+                        ps = System.out;
+                    }
+                }
+            }
+            ps.println(message);
+            ps.flush();
+        }
+        return true;
+    }
+
+    /**
+     *
+     * @param id the tracestream to write to
+     * @param th the throwable to dump a stacktrace for
+     */
+    private static void doTraceException(Object id, Throwable th)
+    {
+        PrintStream ps;
+        synchronized (traceMap) {
+            ps = traceMap.get(id);
+            if (ps == null) {
+                if (id.equals("err")) {
+                    ps = System.err;
+                } else {
+                    ps = System.out;
+                }
+            }
+        }
+        th.printStackTrace(ps);
     }
 
     // flag support
@@ -690,7 +903,7 @@ public class Helper
             rendezvous = new Rendezvous(expected, restartable);
             rendezvousMap.put(identifier, rendezvous);
         }
-        
+
         return true;
     }
 
@@ -1086,6 +1299,222 @@ public class Helper
         }
     }
 
+    // link support
+
+    /**
+     * create a LinkMap used to store links between names and values
+     * @param mapName the identifier for the map
+     * @return true if a new map was created and false if one already existed under the given identifier
+     */
+    public boolean createLinkMap(Object mapName)
+    {
+        return (linkMaps.putIfAbsent(mapName, new HashMap<Object, Object>()) == null);
+    }
+
+    /**
+     * delete a LinkMap used to store links between names and values
+     * @param mapName the identifier for the map
+     * @return true if the map was deleted and false if no map existed under the given identifier
+     */
+    public boolean deleteLinkMap(Object mapName)
+    {
+        return (linkMaps.remove(mapName) != null);
+    }
+
+    /**
+     * atomically add a link from name to value to the LinkMap
+     * identified by mapName returning any previously linked
+     * Object or null if no link currently exists in the map
+     * @param mapName the identifier for the map
+     * @param name    the name of the key
+     * @param value   the value to be stored in the map
+     * @return the previous value stored under name, if any, or null
+     */
+    public Object link(Object mapName, Object name, Object value)
+    {
+        HashMap<Object, Object> map = linkMaps.get(mapName);
+        if (map == null) {
+            HashMap<Object, Object> newMap = new HashMap<Object, Object>();
+            map  = linkMaps.putIfAbsent(mapName, newMap);
+            if (map == null) {
+                map = newMap;
+            }
+        }
+        return map.put(name, value);
+    }
+
+    /**
+     * retrieve the Object name currently is linked to from
+     * the LinkMap named by mapName or null if no link currently
+     * exists in the map
+     * @param mapName the identifier for the map
+     * @param name    the name of the key
+     * @return the value stored in the map under the given key
+     */
+    public Object linked(Object mapName, Object name)
+    {
+        HashMap<Object, Object> map = linkMaps.get(mapName);
+        if (map != null) {
+            synchronized (map) {
+                return map.get(name);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * atomically remove any link from name returning the
+     * Object it is currently linked to or null if no link
+     * currently exists in the map
+     * @param mapName the identifier for the map
+     * @param name    the name of the key
+     * @return the previous value stored under name, if any, or null
+     */
+    public Object unlink(Object mapName, Object name)
+    {
+        HashMap<Object, Object> map = linkMaps.get(mapName);
+        if (map != null) {
+            synchronized (map) {
+                return map.remove(name);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * atomically return a list of all keys for current links in the map named by mapName
+     * @param mapName the name of the map to retrieve keys from
+     * @return a possibly zero-length list of all keys or null if the named map is not found
+     */
+    public List<Object> linkNames(Object mapName)
+    {
+        HashMap<Object, Object> map = linkMaps.get(mapName);
+        if (map != null) {
+            synchronized(map) {
+                Set<Object> keySet = map.keySet();
+
+                int size = keySet.size();
+                if(size == 0) {
+                    return Collections.EMPTY_LIST;
+                } else {
+                    ArrayList<Object> list = new ArrayList<Object>(size);
+                    for (Object key : keySet) {
+                        list.add(key);
+                    }
+                    return list;
+                }
+            }
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * atomically return a list of all values for current links in the map named by mapName
+     * @param mapName the name of the map to retrieve values from
+     * @return a possibly zero-length list of all values or null if the named map is not found
+     */
+    public List<Object> linkValues(Object mapName)
+    {
+        HashMap<Object, Object> map = linkMaps.get(mapName);
+        if (map != null) {
+            synchronized (map) {
+                Collection<Object> values = map.values();
+
+                int size = values.size();
+                if(size == 0) {
+                    return Collections.EMPTY_LIST;
+                } else {
+                    ArrayList<Object> list = new ArrayList<Object>(size);
+                    for (Object key : values) {
+                        list.add(key);
+                    }
+                    return list;
+                }
+            }
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * clear all current links from the map named by mapName
+     * @param mapName the name of the map to clear
+     * @return true if the named map was found and was not empty otherwise false
+     */
+    public boolean clearLinks(Object mapName)
+    {
+        HashMap<Object, Object> map = linkMaps.get(mapName);
+        if(map != null) {
+            synchronized (map) {
+                boolean result = !map.isEmpty();
+                map.clear();
+                return result;
+            }
+        }
+        return false;
+    }
+
+    // default link support
+
+    /**
+     * add a link to the default LinkMap by calling link("default", name, value)
+     * @param name  the name of the key
+     * @param value the value to be stored under key
+     * @return the previous value stored under name, if any, or null
+     */
+    public Object link(Object name, Object value)
+    {
+        return link("default", name, value);
+    }
+
+    /**
+     * retrieve a link from the default LinkMap by calling linked("default", name)
+     * @param name the name of the key
+     * @return the value stored in the map under the given key
+     */
+    public Object linked(Object name)
+    {
+        return linked("default", name);
+    }
+
+    /**
+     * delete a link from the default LinkMap by calling unlink("default", name)
+     * @param name the name of the key
+     * @return the previous value stored under name, if any, or null
+     */
+    public Object unlink(Object name)
+    {
+        return unlink("default", name);
+    }
+
+    /**
+     * retrieve all keys in the default linkmap by indirectly calling linkNames("default")
+     * @return all current keys in the default linkmap
+     */
+    public List<Object> linkNames()
+    {
+        return linkNames("default");
+    }
+
+    /**
+     * retrieve all values in the default linkmap by indirectly calling linkValues("default")
+     * @return all current values in the default linkmap
+     */
+    public List<Object> linkValues()
+    {
+        return linkValues("default");
+    }
+
+    /**
+     * clear all links in the default linkmap by indirectly calling clearLinks("default")
+     * @return true if the default map was found and was not empty otherwise false
+     */
+    public boolean clearLinks()
+    {
+        return clearLinks("default");
+    }
+    
     /**
      * cause the current thread to throw a runtime exception which will normally cause it to exit.
      * The exception may not kill the thread if the trigger method or calling code contains a
@@ -1599,8 +2028,7 @@ public class Helper
     {
     	trace(key, formatAllStacks(prefix, maxFrames));
     }
-    
-    
+
     // trace stack of a specific thread
 
     /**
@@ -2344,6 +2772,7 @@ public class Helper
     {
         traceStackRange(from, to, true, includeClass, includePackage, prefix, key);
     }
+
     /**
      * print all stack frames between the frames which match start and end to the trace stream identified by key
      * preceded by prefix.
@@ -2434,7 +2863,6 @@ public class Helper
         appendStack(buffer, prefix, maxFrames, Thread.currentThread(), getStack());
         return buffer.toString();
     }
-    
 
     //
     // retrieving frames for all threads
@@ -3131,7 +3559,7 @@ public class Helper
             buffer.append('\n');
         }
         // n.b. the range includes the last matched frame
-        
+
         for (i = first; i <= last; i++) {
             printlnFrame(buffer, stack[i]);
         }
@@ -3140,7 +3568,7 @@ public class Helper
     }
 
     // trigger management
-    
+
     /**
      * enable or disable recursive triggering of rules by subsequent operations performed during binding,
      * testing or firing of the current rule in the current thread.
@@ -3198,6 +3626,7 @@ public class Helper
 
     public static void deactivated()
     {
+        clearStaticResources();
         if (Transformer.isDebug()) {
             System.out.println("Default helper deactivated");
         }
@@ -3411,14 +3840,25 @@ public class Helper
         return nextFileIndex++;
     }
 
-    private String nextFileName()
+    /**
+     * generate a name for an output file to be used to sink the trace stream
+     * named by identifier. the name will start with the prefix "trace"
+     * followed by a 9 digit number followed by a ".log" suffix.
+     * @return a name to be used for the trace file.
+     */
+    private static String nextFileName()
     {
+        // if we are writing to the debug, verbose or noisy trace streams
+        // then start the file name with the that name as prefix otherwise
+        // juts start it with the prefix "trace"
+        String prefix = "trace";
+        
         StringWriter writer = new StringWriter();
         String digits = Integer.toString(nextFileIndex());
         int numDigits = digits.length();
         int idx;
 
-        writer.write("trace");
+        writer.write(prefix);
 
         // this pads up to 9 digits but we may get more if we open enough files!
         for (idx = 9; idx > numDigits; idx--) {
@@ -3426,9 +3866,33 @@ public class Helper
         }
 
         writer.write(digits);
-
+        writer.write(".log");
         return writer.toString();
     }
+
+    /**
+     * clean up function called by deactivate to ensure all
+     * static resources used to hold rule state are cleared
+     */
+    private static void clearStaticResources()
+    {
+        // simply clean up all static resources
+        // it is up to the program to ensure
+        // nothing is depending or waiting on them
+        flagSet.clear();
+        countDownMap.clear();
+        counterMap.clear();
+        waitMap.clear();
+        rendezvousMap.clear();
+        timerMap.clear();
+        linkMaps.clear();
+        // close all open trace streams
+        List<Object> keyset = new ArrayList<Object>(traceMap.keySet());
+        for (Object key : keyset) {
+            doTraceClose(key);
+        }
+    }
+
     /**
      * a hash map used to identify trace streams from their
      * identifying objects
@@ -3472,12 +3936,10 @@ public class Helper
      * objects
      */
     private static HashMap<Object, Timer> timerMap = new HashMap<Object, Timer>();
-    
-    // initialise the trace map so it contains the system output and
-    // error keyed under "out" and "err"
 
-    static {
-        traceMap.put("out", System.out);
-        traceMap.put("err", System.err);
-    }
+    /**
+     * a hash map used to identify maps from their identifying
+     * objects
+     */
+    private static ConcurrentHashMap<Object, HashMap<Object, Object>> linkMaps = new ConcurrentHashMap<Object, HashMap<Object, Object>>();
 }

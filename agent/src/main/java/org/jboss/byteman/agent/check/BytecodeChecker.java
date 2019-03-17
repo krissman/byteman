@@ -32,36 +32,52 @@ import org.objectweb.asm.ClassReader;
  * a private class which can be used to derive the super and interfaces of a class from its defining bytecode
  */
 public class BytecodeChecker implements ClassChecker {
-    ClassStructureAdapter adapter;
+    private boolean isInterface;
+    private String[] interfaces;
+    private String superName;
+    private String outerClass;
+    private int bytesize;
 
     public BytecodeChecker(byte[] buffer) {
-        // run a pass over the bytecode to identify the interfaces
+        // run a pass over the bytecode to identify the super and interfaces
         ClassReader cr = new ClassReader(buffer);
-        adapter = new ClassStructureAdapter();
+        ClassStructureAdapter adapter = new ClassStructureAdapter();
         cr.accept(adapter, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        isInterface = adapter.isInterface();
+        interfaces = adapter.getInterfaces();
+        for (int i = 0; i < interfaces.length; i++) {
+            // it's safe to update the array as this is the only use
+            interfaces[i] = TypeHelper.internalizeClass(interfaces[i]);
+        }
+        superName = adapter.getSuper();
+        if (superName != null) {
+            superName = TypeHelper.internalizeClass(superName);
+        }
+        outerClass = adapter.getOuterClass();
+        bytesize = buffer.length;
     }
 
     public boolean isInterface() {
-        return adapter.isInterface();
+        return isInterface;
     }
 
     public String getSuper() {
-        String supername = adapter.getSuper();
-        if (supername != null) {
-            supername = TypeHelper.internalizeClass(adapter.getSuper());
-        }
-        return supername;
+        return superName;
     }
 
     public boolean hasOuterClass() {
-        return adapter.getOuterClass() != null;
+        return outerClass != null;
     }
 
     public int getInterfaceCount() {
-        return adapter.getInterfaces().length;
+        return interfaces.length;
     }
 
     public String getInterface(int idx) {
-        return TypeHelper.internalizeClass(adapter.getInterfaces()[idx]);
+        return interfaces[idx];
+    }
+
+    public int getBytesize() {
+        return bytesize;
     }
 }

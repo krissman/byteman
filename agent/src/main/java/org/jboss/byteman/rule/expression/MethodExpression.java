@@ -58,10 +58,9 @@ public class MethodExpression extends Expression
         try {
             setTriggeringMethod = Helper.class.getMethod("setTriggering", boolean.class);
         } catch (NoSuchMethodException e) {
-            if (Transformer.isVerbose()) {
-                System.out.println("MethodExpression: failed to lookup Helper.setTriggering(boolean) " + e);
-                e.printStackTrace();
-            }
+            Helper.verbose("MethodExpression: failed to lookup Helper.setTriggering(boolean) " + e);
+            Helper.verboseTraceException(e);
+
             setTriggeringMethod = null;
         }
     }
@@ -185,7 +184,7 @@ public class MethodExpression extends Expression
 
         // see if we can find a method for this call
         
-        findMethod(isBuiltIn);
+        findMethod(isBuiltIn, expected);
 
         // now go back and identify the parameter types
 
@@ -211,7 +210,7 @@ public class MethodExpression extends Expression
      * @param publicOnly true if only public methods should be considered
      * @throws TypeException
      */
-    private void findMethod(boolean publicOnly) throws TypeException
+    private void findMethod(boolean publicOnly, Type expected) throws TypeException
     {
         // check all declared methods of each class in the class hierarchy using the one with
         // the most specific recipient type if we can find it
@@ -219,6 +218,7 @@ public class MethodExpression extends Expression
         TypeGroup typeGroup =  getTypeGroup();
         Class<?> clazz = rootType.getTargetClass();
         boolean isStatic = (recipient == null);
+        boolean isInterface = clazz.isInterface();
 
         int arity = arguments.size();
         LinkedList<Class<?>> clazzes = new LinkedList<Class<?>>();
@@ -251,6 +251,10 @@ public class MethodExpression extends Expression
                 // move on to the next class
                 clazz = clazz.getSuperclass();
             }
+        }
+        // for an interface don't forget to include methods of Object
+        if (isInterface) {
+            clazzes.add(Object.class);
         }
         // now check for a matching method in each class or interface in order
         while (!clazzes.isEmpty()) {
@@ -300,21 +304,14 @@ public class MethodExpression extends Expression
 
                 // see if we have a unique best fit
 
-                Method method = bestMatchCandidate(candidates);
+                Method method = bestMatchCandidate(candidates, expected);
 
                 if (method != null) {
-                    if (!Modifier.isPublic(method.getModifiers())) {
-                        // see if we can actually access this method
-                        try {
-                            method.setAccessible(true);
-                        } catch (SecurityException e) {
-                            // hmm, maybe try the next super
-                            continue;
-                        }
-                        // we need to remember that this is not public
+                    Type declaringType = getTypeGroup().ensureType(method.getDeclaringClass());
+                    if (rule.requiresAccess(declaringType) || rule.requiresAccess(method)) {
                         isPublicMethod  = false;
                         // save the method so we can use it from the compiled code
-                        methodIndex = rule.addAccessibleMethod(method);
+                        methodIndex = rule.addAccessibleMethodInvoker(method);
                     } else {
                         isPublicMethod =  true;
                     }
@@ -361,11 +358,15 @@ public class MethodExpression extends Expression
                 }
                 return true;
             }
-            // we have to enable triggers whenever we call out to a method in case it contians a trigger point
+            // we have to enable triggers whenever we call out to a method in case it contains a trigger point
             // TODO - do we do this if the method is a built-in? i.e. if the target is an instance of the helper class
             // TODO - this breaks the user disable option so fix it!
             Rule.enableTriggersInternal();
-            return method.invoke(recipientValue, argValues);
+            if (isPublicMethod) {
+                return method.invoke(recipientValue, argValues);
+            } else {
+                return rule.invokeAccessibleMethod(recipientValue, argValues, methodIndex);
+            }
         } catch (InvocationTargetException e) {
             Throwable th = e.getCause();
             if (th instanceof ExecuteException) {
@@ -420,7 +421,7 @@ public class MethodExpression extends Expression
                 Type paramType = paramTypes.get(i);
                 // compile code to stack argument and type convert if necessary
                 argument.compile(mv, compileContext);
-                compileTypeConversion(argType, paramType, mv, compileContext);
+                compileContext.compileTypeConversion(argType, paramType);
                 // allow for stacked paramType value
                 extraParams += (paramType.getNBytes() > 4 ? 2 : 1);
             }
@@ -484,11 +485,26 @@ public class MethodExpression extends Expression
                 compileContext.addStackCount(2);
                 Expression argument = arguments.get(i);
                 Type argType = argumentTypes.get(i);
+                // if the argument type is inaccessible then we can treat it as an object
+                // for the purposes of type conversion
+                if (rule.requiresAccess(argType)) {
+                    argType = Type.OBJECT;
+                }
+                // if the parameter type is inaccessible then we can treat it as an object
+                // for the purposes of type conversion
                 Type paramType = paramTypes.get(i);
+                if (rule.requiresAccess(paramType)) {
+                    paramType = Type.OBJECT;
+                }
                 // compile code to stack argument and type convert/box if necessary
+                // n.b. even though we are simply assembling an Object array we
+                // don't simply convert direct to Object because the conversion step
+                // may need to perform a numeric or toString coercion.
                 argument.compile(mv, compileContext);
-                compileTypeConversion(argType, paramType, mv, compileContext);
-                compileBox(paramType, mv, compileContext);
+                compileContext.compileTypeConversion(argType, paramType);
+                if (paramType.isPrimitive()) {
+                    compileContext.compileBox(Type.boxType(paramType));
+                }
                 // that's 3 extra words which now get removed
                 mv.visitInsn(Opcodes.AASTORE);
                 compileContext.addStackCount(-3);
@@ -518,7 +534,11 @@ public class MethodExpression extends Expression
                 compileContext.addStackCount(-1);
             } else {
                 // do any necessary casting and/or unboxing
-                compileTypeConversion(Type.OBJECT, type, mv, compileContext);
+                if (!rule.requiresAccess(type)) {
+                    // only convert if the result type is accessible
+                    // if not leave it as Object for the consumer
+                    compileContext.compileTypeConversion(Type.OBJECT, type);
+                }
             }
 
             // now disable triggering again
@@ -572,7 +592,7 @@ public class MethodExpression extends Expression
     }
 
     /**
-     * prune the candidates list removing all methods whose parameter at index argIdx cannto be assigned to
+     * prune the candidates list removing all methods whose parameter at index argIdx cannot be assigned to
      * class argClazz
      * @param candidates candidate matching methods
      * @param argIdx index of arg curently being checked
@@ -584,7 +604,7 @@ public class MethodExpression extends Expression
         for (int i = 0; i < candidates.size();) {
             Method m = candidates.get(i);
             Class nextClazz = m.getParameterTypes()[argIdx];
-            if (nextClazz.isAssignableFrom(argClazz)) {
+            if (nextClazz == argClazz || nextClazz.isAssignableFrom(argClazz)) {
                 i++;
             } else {
                 candidates.remove(i);
@@ -597,18 +617,24 @@ public class MethodExpression extends Expression
      * return the method whose signature is the best fit for the call argument types. the selection
      * is made by counting the number of cases where the argument type matches the parameter type
      * exactly and then the number of cases where the argument type matches the parameter type without
-     * the need for type coersion (i.e. the parameter tyoe is a supertype of the argument type)
+     * the need for type coercion (i.e. the parameter tyoe is a supertype of the argument type)
      * @param candidates a list of methods all of whose signatures are assignable from the
+     * @param expected an expected type which may or may not constrain the method return type
      *
      * @return the best match if there is a unique one otherwise NULL
      */
-    public Method bestMatchCandidate(List<Method> candidates)
+    public Method bestMatchCandidate(List<Method> candidates, Type expected)
     {
         int argCount = argumentTypes.size();
         Method bestFit = null;
         int bestExactFitCount = -1;
         int bestInheritedFitCount = 0;
         boolean ambiguous = false;
+        Class<?> expectedClazz =  null;
+
+        if (expected.isDefined() && expected != Type.VOID) {
+            expectedClazz = expected.getTargetClass();
+        }
 
         for (int i = 0; i < candidates.size(); i++) {
             Method m = candidates.get(i);
@@ -618,9 +644,20 @@ public class MethodExpression extends Expression
             for (int j = 0; j < argCount; j++) {
                 Class argClazz = argumentTypes.get(j).getTargetClass();
                 Class methodParamClazz = m.getParameterTypes()[j];
-                if (argClazz == methodParamClazz) {
+                if (methodParamClazz == argClazz) {
                     exactFitCount++;
-                } else if (argClazz.isAssignableFrom(argClazz)) {
+                } else if (methodParamClazz.isAssignableFrom(argClazz)) {
+                    inheritedFitCount++;
+                }
+            }
+
+            // also filter according to return type
+
+            if (expectedClazz != null) {
+                Class<?> methodRetClazz = m.getReturnType();
+                if (methodRetClazz == expectedClazz) {
+                    exactFitCount++;
+                } else if (expectedClazz.isAssignableFrom(methodRetClazz)) {
                     inheritedFitCount++;
                 }
             }
@@ -637,7 +674,12 @@ public class MethodExpression extends Expression
                     bestInheritedFitCount = inheritedFitCount;
                     ambiguous = false;
                 } else if (inheritedFitCount == bestInheritedFitCount) {
-                    ambiguous = true;
+                    // if we have a method with a more restrictive return type then pick it
+                    if (bestFit.getReturnType().isAssignableFrom(m.getReturnType())) {
+                        bestFit = m;
+                    } else if (!m.getReturnType().isAssignableFrom(bestFit.getReturnType())) {
+                        ambiguous = true;
+                    }
                 }
             }
         }

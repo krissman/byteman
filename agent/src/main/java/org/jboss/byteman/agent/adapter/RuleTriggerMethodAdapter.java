@@ -23,6 +23,7 @@
 */
 package org.jboss.byteman.agent.adapter;
 
+import org.jboss.byteman.rule.helper.Helper;
 import org.objectweb.asm.Handle;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Type;
@@ -443,7 +444,13 @@ public class RuleTriggerMethodAdapter extends RuleGeneratorAdapter
                 int idx = binding.getLocalIndex();
                 loadLocal(idx);
                 // local type may be Object when actual type is more specific but we don't care here
-                box(getLocalType(idx));
+                // special case -- if this is a bool we may have recorded it as int when it was saved
+                // using an iload. we can use the descriptor in the binding to detect this special case
+                if (binding.getDescriptor().equals("boolean")) {
+                    box(Type.BOOLEAN_TYPE);
+                } else {
+                    box(getLocalType(idx));
+                }
             } else if (binding.isParamCount()){
                 int count = argumentTypes.length;
                 push(count);
@@ -539,9 +546,13 @@ public class RuleTriggerMethodAdapter extends RuleGeneratorAdapter
                     // insert that when we see an ALOAD for a local var we do not know about.
                     // but we can rely on the descriptor in the binding which we derived during
                     // rule check processing
+                    // similarly, if this is a bool we may have recorded it as int when it was saved
+                    // using an iload.
                     if (t.getClassName().equals("java.lang.Object")) {
                         String descriptor = binding.getDescriptor();
                         t = Type.getType("L" + descriptor.replace('.', '/') + ";");
+                    } else if (t == Type.INT_TYPE && binding.getDescriptor().equals("boolean")) {
+                        t = Type.BOOLEAN_TYPE;
                     }
                     unbox(t);
                     storeLocal(idx);
@@ -944,7 +955,7 @@ public class RuleTriggerMethodAdapter extends RuleGeneratorAdapter
 
                 // if we get here the return and throw handlers labels should be null
                 if (details.getEarlyReturnHandler() != null || details.getThrowHandler() != null) {
-                    System.out.println("unexpected : trigger region with open monitorenters has subtype handler!");
+                    Helper.err("unexpected : trigger region with open monitorenters has subtype handler!");
                 }
 
                 // generate rethrow code and mark the handler as a try catch block for all
@@ -1066,9 +1077,9 @@ public class RuleTriggerMethodAdapter extends RuleGeneratorAdapter
         Type ruleType = Type.getType(TypeHelper.externalizeType("org.jboss.byteman.rule.Rule"));
         Method method = Method.getMethod("void execute(String, Object, Object[])");
         // we are at the relevant line in the method -- so add a trigger call here
-        if (Transformer.isVerbose()) {
-            System.out.println("RuleTriggerMethodAdapter.injectTriggerPoint : inserting trigger into " + getTriggerClassName() + "." + getMethodName() + " for rule " + rule.getName());
-        }
+
+        Helper.verbose("RuleTriggerMethodAdapter.injectTriggerPoint : inserting trigger into " + getTriggerClassName() + "." + getMethodName() + " for rule " + rule.getName());
+
         Label startLabel = newLabel();
         Label endLabel = newLabel();
         visitTriggerStart(startLabel);
